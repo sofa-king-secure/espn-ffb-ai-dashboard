@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.venv/
+venv/
+fantasy_status.md
+fantasy_recommendations.md
+env-file.txt
+*.zip

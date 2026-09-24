@@ -1,0 +1,17 @@
+[server]
+# Local only: the dashboard holds live ESPN cookies and AI keys.
+address = "127.0.0.1"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"
+
+[theme]
+base = "light"
+primaryColor = "#C2410C"
+backgroundColor = "#F6F3EC"
+secondaryBackgroundColor = "#ECE7DB"
+textColor = "#1B1B1B"
+font = "sans serif"
