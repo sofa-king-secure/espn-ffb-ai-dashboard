@@ -33,29 +33,58 @@ st.set_page_config(page_title=APP_TITLE, page_icon="🏈", layout="wide")
 # System font stacks only: nothing is fetched from a third-party CDN.
 st.markdown("""
 <style>
-:root { --ink:#1b1b1b; --paper:#f6f3ec; --rule:#d8d1c1; --signal:#c2410c; --good:#2f6b3a; --muted:#6b665c; }
-.block-container { padding-top: 1.6rem; max-width: 1400px; }
-.num { font-variant-numeric: tabular-nums; font-family: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace; }
-.board { border-top: 3px solid var(--ink); border-bottom: 1px solid var(--rule); padding: .9rem 0 1rem; margin-bottom: 1rem;
-         display:grid; grid-template-columns: 1fr auto 1fr; align-items:end; gap:1.5rem; }
-.board .side { line-height:1.1; }
-.board .side.right { text-align:right; }
-.board .team { font-size:1.05rem; font-weight:600; color:var(--ink); }
-.board .proj { font-size:3rem; font-weight:700; color:var(--ink); }
-.board .live { font-size:.85rem; color:var(--muted); }
-.board .mid { text-align:center; padding-bottom:.4rem; }
-.board .spread { font-size:1.35rem; font-weight:700; }
-.board .spread.fav { color: var(--good); } .board .spread.dog { color: var(--signal); }
-.board .wk { font-size:.8rem; color:var(--muted); margin-top:.2rem; }
-.alert { border-left:4px solid var(--rule); padding:.35rem .7rem; margin:.25rem 0; background:#fbf9f4; font-size:.92rem; }
-.alert.critical { border-color: var(--signal); } .alert.warning { border-color:#b08900; }
-.move { border:1px solid var(--rule); padding:.6rem .8rem; background:#fbf9f4; height:100%; font-size:.9rem; }
-.move b { font-size:.95rem; } .move .in { color:var(--good); } .move .out { color:var(--signal); }
-.pill { display:inline-block; padding:.05rem .45rem; border:1px solid var(--rule); font-size:.78rem; margin-left:.3rem; }
+:root { --red:#cc0000; --ink:#121213; --nav:#1d1e1f; --page:#edeef0; --rule:#dcdddf; --muted:#6c6d6f;
+        --good:#008a00; --shadow:0 1px 3px rgba(0,0,0,.12); }
+[data-testid="stAppViewContainer"], [data-testid="stMain"] { background: var(--page); }
+header[data-testid="stHeader"] { background: transparent; }
+.block-container { padding-top: 1rem; max-width: 1400px; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* top bar: dark nav strip with a slanted red title block */
+.topbar { background:var(--nav); display:flex; align-items:stretch; height:58px; border-radius:6px;
+          overflow:hidden; margin-bottom:1rem; box-shadow:var(--shadow); }
+.topbar .brand { background:var(--red); display:flex; align-items:center; padding:0 2.6rem 0 1.3rem;
+                 clip-path:polygon(0 0,100% 0,calc(100% - 26px) 100%,0 100%); }
+.topbar .brand span { color:#fff; font-weight:900; font-style:italic; font-size:1.3rem; letter-spacing:-.01em;
+                      text-transform:uppercase; white-space:nowrap; }
+.topbar .section { color:#fff; font-weight:700; font-size:.95rem; display:flex; align-items:center; padding:0 1rem; }
+
+/* scoreboard card */
+.board { background:#fff; border-radius:6px; box-shadow:var(--shadow); border-top:4px solid var(--red);
+         padding:1rem 1.5rem 1.1rem; margin-bottom:.8rem; display:grid; grid-template-columns:1fr auto 1fr;
+         align-items:center; gap:1.5rem; }
+.board .side { line-height:1.1; } .board .side.right { text-align:right; }
+.board .team { font-size:1rem; font-weight:700; color:var(--ink); }
+.board .proj { font-size:2.9rem; font-weight:800; color:var(--ink); line-height:1.05; }
+.board .live { font-size:.8rem; color:var(--muted); }
+.board .mid { text-align:center; }
+.board .spread { font-size:1.05rem; font-weight:800; text-transform:uppercase; letter-spacing:.01em; }
+.board .spread.fav { color:var(--good); } .board .spread.dog { color:var(--red); }
+.board .wk { font-size:.78rem; color:var(--muted); margin-top:.25rem; }
+.pill { display:inline-block; padding:.05rem .4rem; background:var(--page); border-radius:3px; font-size:.75rem;
+        font-weight:600; color:var(--muted); margin-left:.35rem; vertical-align:middle; }
+
+/* headline-style alerts and pending-move cards */
+.alert { background:#fff; border-radius:6px; box-shadow:var(--shadow); border-left:4px solid var(--rule);
+         padding:.5rem .8rem; margin:.3rem 0; font-size:.92rem; font-weight:500; color:var(--ink); }
+.alert.critical { border-left-color:var(--red); } .alert.warning { border-left-color:#e8a200; }
+.move { background:#fff; border-radius:6px; box-shadow:var(--shadow); padding:.7rem .9rem; height:100%;
+        font-size:.88rem; color:var(--ink); }
+.move b { font-size:.95rem; } .move .in { color:var(--good); } .move .out { color:var(--red); }
+
+/* tabs as the section nav, panels as white cards */
+[data-testid="stTabs"] [role="tablist"] { gap:1.5rem; }
+[data-testid="stTab"] p { font-weight:700; font-size:.95rem; }
+[data-testid="stTabPanel"] { background:#fff; border-radius:6px; box-shadow:var(--shadow);
+                              padding:1.1rem 1.3rem 1.3rem; margin-top:.5rem; }
+[data-testid="stHeading"] h3 { font-weight:800; font-size:1.1rem; border-bottom:1px solid var(--rule);
+                               padding-bottom:.45rem; }
+[data-testid="stSidebarUserContent"] h3 { text-transform:uppercase; font-size:.9rem;
+                               letter-spacing:.03em; border-bottom:2px solid var(--red); }
 </style>
 """, unsafe_allow_html=True)
 
-STATUS_COLORS = {"Q": "#fff1c2", "D": "#ffd9b8", "O": "#f7c1b0", "IR": "#f7c1b0", "SSPD": "#f7c1b0",
+STATUS_COLORS = {"Q": "#fff4cc", "D": "#ffe0c7", "O": "#fbd3d3", "IR": "#fbd3d3", "SSPD": "#fbd3d3",
                  "DTD": "#fff1c2", "P": "#e8f2df"}
 PROFILE_LABELS = {"floor": "Floor — conservative", "ceiling": "Ceiling — aggressive"}
 FOCUS_OPTIONS = {"current_week": "Waiver adds for this week's need",
@@ -71,7 +100,8 @@ def _init_state():
     for k, v in defaults.items():
         st.session_state.setdefault(k, v)
     if st.session_state.snapshot is None:  # FR-1.2: open instantly on the last cached run
-        run = cache.load_run()
+        s = load_settings()
+        run = cache.load_run(league_id=s.league_id, team_id=s.team_id)  # scoped by file name
         if run:
             _adopt_run(run, "cache")
 
@@ -86,8 +116,8 @@ def _adopt_run(run: dict, source: str):
     st.session_state.loaded_from = source
 
 
-_init_state()
 settings = load_settings()
+_init_state()
 
 
 def _advisor(profile: str, focus: list[str]) -> Advisor:
@@ -115,10 +145,9 @@ with st.sidebar:
     icon = {"firefox_synced": "🟢", "cookies_active": "🟢", "missing": "⚪", "expired": "🔴", "error": "🟠"}
     st.caption(f"{icon.get(auth.state, '⚪')} **{auth.label}** — {auth.message}")
 
-    runs = cache.list_runs()
+    runs = cache.list_runs(settings.league_id, settings.team_id)
     if runs:
-        labels = {r: datetime.strptime(r.stem[4:], "%Y%m%d-%H%M%S").strftime("%a %b %d · %I:%M:%S %p") for r in runs}
-        pick = st.selectbox("Cached runs", runs, format_func=lambda r: labels[r])
+        pick = st.selectbox("Cached runs", runs, format_func=cache.run_label)
         if st.button("Load cached run", width="stretch"):
             _adopt_run(cache.load_run(pick), "cache")
             st.rerun()
@@ -166,7 +195,8 @@ if run_live:
                     adv = _advisor(profile, focus)
                     st.session_state.ai_report = adv.send(gameplan_prompt(dossier))
                     st.session_state.ai_model = adv.model_used
-                    cache.update_latest_report(st.session_state.ai_report, adv.model_used)
+                    cache.update_latest_report(st.session_state.ai_report, adv.model_used,
+                                               settings.league_id, settings.team_id)
                 except Exception as exc:
                     st.warning(f"ESPN data saved; AI step failed: {exc}")
             status.update(label="Analysis complete", state="complete", expanded=False)
@@ -181,7 +211,8 @@ if run_live:
 snap = st.session_state.snapshot
 
 # ---------------------------------------------------------------- header
-st.title(APP_TITLE)
+st.markdown(f'<div class="topbar"><div class="brand"><span>{html.escape(APP_TITLE)}</span></div>'
+            '<div class="section">Fantasy Football</div></div>', unsafe_allow_html=True)
 if snap:
     m, mu = snap["meta"], snap["matchup"]
     esc = html.escape
@@ -398,7 +429,7 @@ with tabs[2]:
         st.caption("Run an analysis first.")
     else:
         fa = pd.DataFrame(snap["free_agents"])
-        c1, c2, c3 = st.columns([2.2, 2, 1.2])
+        c1, c2, c3 = st.columns([2, 2.5, 0.9])
         pos = c1.pills("Position", ["ALL", "QB", "RB", "WR", "TE", "D/ST", "K"], default="ALL") or "ALL"
         mode = c2.segmented_control("View", ["High-add velocity", "Sub-35% sleepers", "Projection"],
                                     default="High-add velocity") or "High-add velocity"
@@ -449,7 +480,8 @@ with tabs[3]:
                     st.session_state.chat = []
                     st.session_state.ai_report = adv.send(gameplan_prompt(st.session_state.dossier))
                     st.session_state.ai_model = adv.model_used
-                    cache.update_latest_report(st.session_state.ai_report, adv.model_used)
+                    cache.update_latest_report(st.session_state.ai_report, adv.model_used,
+                                               settings.league_id, settings.team_id)
             except Exception as exc:
                 st.error(f"AI request failed: {exc}")
         if top[1].button("Reset chat"):
@@ -597,3 +629,13 @@ with tabs[5]:
             st.error(str(exc))
     st.caption(f"Firefox cookie DB: `{find_cookie_db(settings.firefox_profile_path) or 'not found'}` · "
                f"Data dir: `{data_dir()}`")
+    with st.expander("Clear cached runs"):
+        st.caption("Deletes every saved run and the markdown reports for this install (all leagues/teams). "
+                   "Your .env is not touched. Other clones of the app keep their own history.")
+        if st.checkbox("Yes, delete this install's history"):
+            if st.button("Delete history", type="primary"):
+                removed = cache.clear_all()
+                for k in ("snapshot", "dossier", "ai_report", "ai_model", "candidate", "write_result"):
+                    st.session_state[k] = None if k in ("snapshot", "candidate", "write_result") else ""
+                st.success(f"Removed {removed} file(s).")
+                st.rerun()

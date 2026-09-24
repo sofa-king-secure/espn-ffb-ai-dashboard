@@ -168,7 +168,6 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75) 
         "slot_counts": slot_counts,
         "pending": pending_transactions(league, team.team_id),
         "free_agents": free_agents(league, week, fa_pool_per_pos),
-        "owners": owners,
         "swid_owns_team": clean_swid.lower() in {o.lower() for o in owners} if owners else False,
     }
     snap["alerts"] = compute_alerts(snap)

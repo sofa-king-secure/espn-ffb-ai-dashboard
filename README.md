@@ -48,8 +48,10 @@ extracted `espn-ffb-ai-dashboard-main` folder (skip the `git clone` line).
 
 Opens http://localhost:8501 (bound to 127.0.0.1 only). `python -m streamlit run app.py` also works.
 
-Data (run history, `fantasy_status.md`, `fantasy_recommendations.md`) lives in
-`%LOCALAPPDATA%\FFBDashboard` on Windows and `~/Library/Application Support/FFBDashboard` on macOS.
+Data (run history, `fantasy_status.md`, `fantasy_recommendations.md`) lives in a per-install folder under
+`%LOCALAPPDATA%\FFBDashboard\` on Windows and `~/Library/Application Support/FFBDashboard/` on macOS, so a
+fresh clone always starts empty, and only runs for the currently configured league/team are shown. The exact path is shown at the bottom of the Configuration tab, which also
+has **Clear cached runs**.
 
 ## First run
 Open the **Configuration** tab. With Firefox logged in to ESPN, **Detect from Firefox** fills in your
@@ -61,7 +63,7 @@ press **Run analysis**.
 git pull
 python -m pip install -r requirements.txt
 ```
-Your `.env` and run history are untouched: `.env` is git-ignored and history lives outside the repo.
+Your `.env` and run history are untouched: `.env` is git-ignored and history lives outside the repo, keyed to the install folder (moving the folder starts a fresh history).
 
 ## Shutting down
 Use **Shut down app** at the bottom of the sidebar, or press `Ctrl+C` in the terminal that launched it.

@@ -8,6 +8,7 @@ directory: the .env file always lives next to app.py, regardless of where
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import platform
 import stat
@@ -26,10 +27,11 @@ ENV_PATH = PROJECT_ROOT / ".env"
 def data_dir() -> Path:
     """Per-user data directory for snapshots, reports, and run history.
 
-    Windows : %LOCALAPPDATA%\\FFBDashboard  (falls back to %APPDATA%)
-    macOS   : ~/Library/Application Support/FFBDashboard
-    Linux   : $XDG_DATA_HOME/FFBDashboard or ~/.local/share/FFBDashboard
-    Override with FFB_DATA_DIR in .env.
+    Windows : %LOCALAPPDATA%\\FFBDashboard\\<install>  (falls back to %APPDATA%)
+    macOS   : ~/Library/Application Support/FFBDashboard/<install>
+    Linux   : $XDG_DATA_HOME/FFBDashboard/<install> or ~/.local/share/FFBDashboard/<install>
+    <install> = folder name + hash of the install path, so every clone starts empty
+    and two installs never share history. Override with FFB_DATA_DIR in .env.
     """
     override = _env_value("FFB_DATA_DIR")
     if override:
@@ -44,6 +46,8 @@ def data_dir() -> Path:
         else:
             xdg = os.getenv("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
             base = Path(xdg) / APP_NAME
+        install_id = hashlib.sha256(str(PROJECT_ROOT).lower().encode()).hexdigest()[:10]
+        base = base / f"{PROJECT_ROOT.name}-{install_id}"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
