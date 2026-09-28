@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import socket
 import stat
 import tempfile
 from dataclasses import dataclass, field, asdict
@@ -85,6 +86,7 @@ ENV_SCHEMA: list[tuple[str, str, bool, str]] = [
     ("OPENAI_MODEL", "gpt-5.5", False, "Model id on the OpenAI-compatible endpoint"),
     ("OPENAI_BASE_URL", "", False, "Blank = api.openai.com. e.g. http://localhost:11434/v1 for Ollama"),
     ("ENABLE_LINEUP_WRITES", "false", False, "Kill switch. Must be true before the dashboard can POST lineup changes"),
+    ("LAN_ACCESS", "false", False, "Let other devices on your private network / VPN connect. Restart launch.py to apply"),
     ("FFB_DATA_DIR", "", False, "Optional override for snapshot/report storage"),
 ]
 
@@ -108,6 +110,7 @@ class Settings:
     openai_model: str = "gpt-5.5"
     openai_base_url: str = ""
     enable_lineup_writes: bool = False
+    lan_access: bool = False
     missing: list = field(default_factory=list)
 
     def ai_key_present(self) -> bool:
@@ -148,6 +151,7 @@ def load_settings() -> Settings:
         openai_model=_env_value("OPENAI_MODEL", "gpt-5.5"),
         openai_base_url=_env_value("OPENAI_BASE_URL"),
         enable_lineup_writes=_as_bool(_env_value("ENABLE_LINEUP_WRITES", "false")),
+        lan_access=_as_bool(_env_value("LAN_ACCESS", "false")),
     )
     for key, attr in (("ESPN_LEAGUE_ID", "league_id"), ("ESPN_TEAM_ID", "team_id"),
                       ("ESPN_SWID", "swid"), ("ESPN_S2", "espn_s2")):
@@ -207,3 +211,19 @@ def update_env_file(updates: dict, env_path: Path = ENV_PATH) -> None:
     # Keep the running process in sync too.
     for k, v in updates.items():
         os.environ[k] = str(v)
+
+
+def lan_ips() -> list[str]:
+    """IPv4 addresses other devices can use to reach this machine (LAN and VPN adapters)."""
+    ips = set()
+    try:  # interface that holds the default route; no packet is sent
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("10.255.255.255", 1))
+            ips.add(sock.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        ips.update(info[4][0] for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET))
+    except OSError:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith(("127.", "169.254.")))

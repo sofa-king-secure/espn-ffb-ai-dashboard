@@ -19,7 +19,7 @@ def _runs_dir() -> Path:
 def save_run(snapshot: dict, dossier_md: str, ai_report: str = "", ai_model: str = "") -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     m = snapshot["meta"]
-    path = _runs_dir() / f"run-{m['league_id']}-{m['team_id']}-{stamp}.json"
+    path = _runs_dir() / f"run-{m['league_id']}-{m['team_id']}-wk{m['week']}-{stamp}.json"
     payload = {"snapshot": snapshot, "dossier_md": dossier_md, "ai_report": ai_report, "ai_model": ai_model}
     path.write_text(json.dumps(payload, indent=1, default=str), encoding="utf-8")
     (data_dir() / "fantasy_status.md").write_text(dossier_md, encoding="utf-8")
@@ -49,7 +49,9 @@ def list_runs(league_id: str = "", team_id: str = "") -> list[Path]:
 
 
 def run_label(path: Path) -> str:
-    return datetime.strptime(path.stem[-15:], "%Y%m%d-%H%M%S").strftime("%a %b %d · %I:%M:%S %p")
+    when = datetime.strptime(path.stem[-15:], "%Y%m%d-%H%M%S").strftime("%a %b %d · %I:%M:%S %p")
+    wk = next((part for part in path.stem.split("-") if part.startswith("wk")), "")
+    return f"Week {wk[2:]} · {when}" if wk else when
 
 
 def clear_all() -> int:

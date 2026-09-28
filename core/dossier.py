@@ -21,7 +21,9 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
     out = [
         f"# ESPN Fantasy Dossier | Week {m['week']}",
         f"**Team:** {m['team_name']} | **Record:** {m['record']} | **Standing:** {m.get('standing')}",
-        f"*Snapshot: {m['fetched_at']} | Scoring period {m['scoring_period']}*", "",
+        f"*Snapshot: {m['fetched_at']} | Scoring period {m['scoring_period']}*",
+        ("**UPCOMING WEEK (analysis only):** the lineup shown is my current lineup carried forward; live scores "
+         "are zero. Plan start/sit and waiver moves for this week." if m.get("mode") == "next" else ""), "",
         "## 1. Pending Moves & Trade Pipeline",
     ]
     if snap["pending"]:

@@ -19,7 +19,7 @@ from core import cache
 from core.ai_advisor import Advisor, context_primer, gameplan_prompt, recommend_lineup
 from core.auth import (AuthStatus, espn_leagues_from_history, find_cookie_db, sanitize_cookies,
                        sync_from_firefox)
-from core.config import ENV_PATH, ENV_SCHEMA, data_dir, load_settings, mask, update_env_file
+from core.config import ENV_PATH, ENV_SCHEMA, data_dir, lan_ips, load_settings, mask, update_env_file
 from core.dossier import build_markdown, spread_text
 from core.espn_client import (EspnError, IR_SLOT, NON_STARTING_SLOTS, SLOT_NAMES, UNSTARTABLE,
                               build_snapshot, connect, discover_my_teams)
@@ -135,6 +135,9 @@ with st.sidebar:
     st.markdown("### Controls")
     run_live = st.button("Run analysis", type="primary", width="stretch",
                          help="Firefox cookie sync → ESPN pull → optional AI game plan")
+    week_mode = st.segmented_control("Week", ["current", "next"], default="current",
+                                     format_func=lambda k: {"current": "This week", "next": "Next week"}[k],
+                                     help="Next week is analysis only: ESPN won't accept lineup changes until it's current.") or "current"
     include_ai = st.toggle("Include AI game plan", value=settings.ai_key_present(),
                            disabled=not settings.ai_key_present(),
                            help="Off = fast ESPN-only refresh. Needs an API key for the selected provider.")
@@ -184,7 +187,7 @@ if run_live:
             st.write("Connecting to ESPN…")
             league, team = connect(settings)
             st.write("Pulling matchup, roster, pending moves, waiver wire…")
-            snap = build_snapshot(league, team, settings)
+            snap = build_snapshot(league, team, settings, week_offset=1 if week_mode == "next" else 0)
             dossier = build_markdown(snap)
             cache.save_run(snap, dossier)
             _adopt_run({"snapshot": snap, "dossier_md": dossier}, "live")
@@ -222,7 +225,7 @@ if snap:
   <div class="side"><div class="team">{esc(m['team_name'])} <span class="pill">{m['record']}</span></div>
     <div class="proj num">{mu['my_projected']:.1f}</div><div class="live num">live {mu['my_score']:.1f}</div></div>
   <div class="mid"><div class="spread {cls} num">{spread_text(mu['spread'])}</div>
-    <div class="wk">Week {m['week']} · {'playoffs' if mu.get('is_playoff') else 'regular season'} · data {m['fetched_at'].replace('T', ' ')}
+    <div class="wk">Week {m['week']}{' · <b>upcoming, analysis only</b>' if m.get('mode') == 'next' else ''} · {'playoffs' if mu.get('is_playoff') else 'regular season'} · data {m['fetched_at'].replace('T', ' ')}
     ({st.session_state.loaded_from})</div></div>
   <div class="side right"><div class="team">{esc(mu['opponent'])}</div>
     <div class="proj num">{mu['opp_projected']:.1f}</div><div class="live num">live {mu['opp_score']:.1f}</div></div>
@@ -586,8 +589,9 @@ with tabs[5]:
                     opts = ["gemini", "anthropic", "openai"]
                     val = col.selectbox(key, opts, index=opts.index(settings.ai_provider)
                                         if settings.ai_provider in opts else 0, help=help_text)
-                elif key in ("FIREFOX_AUTO_SYNC", "ENABLE_LINEUP_WRITES"):
-                    cur = settings.firefox_auto_sync if key == "FIREFOX_AUTO_SYNC" else settings.enable_lineup_writes
+                elif key in ("FIREFOX_AUTO_SYNC", "ENABLE_LINEUP_WRITES", "LAN_ACCESS"):
+                    cur = {"FIREFOX_AUTO_SYNC": settings.firefox_auto_sync, "LAN_ACCESS": settings.lan_access,
+                           "ENABLE_LINEUP_WRITES": settings.enable_lineup_writes}[key]
                     val = "true" if col.checkbox(key, value=cur, help=help_text) else "false"
                 elif secret:
                     present = {"ESPN_SWID": settings.swid, "ESPN_S2": settings.espn_s2,
@@ -629,6 +633,9 @@ with tabs[5]:
             st.error(str(exc))
     st.caption(f"Firefox cookie DB: `{find_cookie_db(settings.firefox_profile_path) or 'not found'}` · "
                f"Data dir: `{data_dir()}`")
+    if settings.lan_access:
+        urls = " · ".join(f"`http://{ip}:8501`" for ip in lan_ips()) or "no network address found"
+        st.caption(f"Network access is on (takes effect when launch.py starts). Other devices: {urls}")
     with st.expander("Clear cached runs"):
         st.caption("Deletes every saved run and the markdown reports for this install (all leagues/teams). "
                    "Your .env is not touched. Other clones of the app keep their own history.")

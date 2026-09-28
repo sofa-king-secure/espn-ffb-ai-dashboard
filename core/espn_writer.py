@@ -66,6 +66,9 @@ def build_payload(snapshot: dict, moves: list[dict], settings: Settings) -> dict
 def preflight(snapshot: dict, moves: list[dict], settings: Settings, max_age_min: int = 20) -> list[str]:
     """Reasons NOT to send. Empty list = clear to submit."""
     problems = []
+    if not snapshot["meta"].get("writable", True):
+        problems.append(f"This is an upcoming Week {snapshot['meta']['week']} snapshot. ESPN only accepts lineup "
+                        "changes for the current week; switch to This week and run a live refresh to apply.")
     if not settings.enable_lineup_writes:
         problems.append("ENABLE_LINEUP_WRITES is false (Configuration tab).")
     if not moves:

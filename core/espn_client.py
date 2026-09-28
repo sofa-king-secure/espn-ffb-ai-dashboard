@@ -133,10 +133,16 @@ def _pro_schedule(league, week) -> dict:
 
 # ----------------------------------------------------------------------------- snapshot
 
-def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75) -> dict:
-    week = league.current_week
+def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75, week_offset: int = 0) -> dict:
+    """week_offset=0: current week (writable). week_offset=1: next week, analysis only.
+
+    espn-api's box_scores() silently clamps future weeks to the current week, so the
+    next-week path builds the matchup from the league schedule and raw roster data.
+    """
     status = _raw(league, "mStatus").get("status", {})
-    scoring_period = status.get("transactionScoringPeriod") or league.scoringPeriodId
+    current_sp = status.get("transactionScoringPeriod") or league.scoringPeriodId
+    week = league.current_week + week_offset
+    scoring_period = current_sp + week_offset
 
     settings_raw = _raw(league, "mSettings").get("settings", {})
     slot_counts = {
@@ -145,8 +151,11 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75) 
         if int(v) > 0 and int(k) not in NON_STARTING_SLOTS
     }
 
-    matchup, box_players = _matchup(league, team, week)
-    roster = _roster(league, team, scoring_period, box_players)
+    if week_offset:
+        matchup, roster = _next_week(league, team, week, scoring_period)
+    else:
+        matchup, box_players = _matchup(league, team, week)
+        roster = _roster(league, team, scoring_period, box_players)
     owners = [m.get("id", "") if isinstance(m, dict) else str(m) for m in (team.owners or [])]
     _, clean_swid = sanitize_cookies("", settings.swid)
 
@@ -161,6 +170,9 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75) 
             "season": settings.season,
             "week": week,
             "scoring_period": scoring_period,
+            "current_week": league.current_week,
+            "mode": "next" if week_offset else "current",
+            "writable": not week_offset,
             "fetched_at": datetime.now().isoformat(timespec="seconds"),
         },
         "matchup": matchup,
@@ -172,6 +184,32 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75) 
     }
     snap["alerts"] = compute_alerts(snap)
     return snap
+
+
+def _starter_projection(roster: list) -> float:
+    return round(sum(p["projected"] for p in roster
+                     if p["slot_id"] not in NON_STARTING_SLOTS and not p["on_bye"] and p["status"] not in UNSTARTABLE), 2)
+
+
+def _next_week(league, team, week, scoring_period):
+    """Upcoming matchup: opponent from team.schedule, projections from each side's current starters."""
+    out = {"opponent": "BYE / no matchup", "my_projected": 0.0, "opp_projected": 0.0,
+           "my_score": 0.0, "opp_score": 0.0, "spread": 0.0, "is_playoff": False}
+    data = _raw(league, "mRoster", scoringPeriodId=scoring_period)
+    roster = _roster(league, team, scoring_period, {}, week=week, data=data, future=True)
+    out["my_projected"] = _starter_projection(roster)
+
+    matchup_period = next((int(mp) for mp, periods in (league.settings.matchup_periods or {}).items()
+                           if week in periods), None)
+    opp = None
+    if matchup_period and 0 < matchup_period <= len(team.schedule or []):
+        opp = team.schedule[matchup_period - 1]
+    if opp is not None and getattr(opp, "team_id", None) not in (None, team.team_id):
+        opp_roster = _roster(league, opp, scoring_period, {}, week=week, data=data, future=True)
+        out.update(opponent=opp.team_name, opp_projected=_starter_projection(opp_roster))
+        out["note"] = "Projections use each team's current starters for next week."
+    out["spread"] = round(out["my_projected"] - out["opp_projected"], 2)
+    return out, roster
 
 
 def _matchup(league, team, week):
@@ -203,11 +241,11 @@ def _matchup(league, team, week):
     return out, box_players
 
 
-def _roster(league, team, scoring_period, box_players) -> list:
-    data = _raw(league, "mRoster", scoringPeriodId=scoring_period)
+def _roster(league, team, scoring_period, box_players, week=None, data=None, future=False) -> list:
+    data = data if data is not None else _raw(league, "mRoster", scoringPeriodId=scoring_period)
     entries = next((t.get("roster", {}).get("entries", [])
                     for t in data.get("teams", []) if t.get("id") == team.team_id), [])
-    schedule = _pro_schedule(league, league.current_week)
+    schedule = _pro_schedule(league, week or league.current_week)
     roster = []
     for e in entries:
         ppe = e.get("playerPoolEntry", {}) or {}
@@ -238,8 +276,8 @@ def _roster(league, team, scoring_period, box_players) -> list:
             "status_raw": raw_status or "ACTIVE",
             "status": _status_code(raw_status),
             "projected": round(float(proj or 0.0), 2),
-            "actual": round(float(getattr(bp, "points", 0.0) or 0.0), 2) if bp else 0.0,
-            "locked": bool(ppe.get("lineupLocked", False)),
+            "actual": 0.0 if future else (round(float(getattr(bp, "points", 0.0) or 0.0), 2) if bp else 0.0),
+            "locked": False if future else bool(ppe.get("lineupLocked", False)),
             "pct_owned": round(float((pl.get("ownership") or {}).get("percentOwned", 0) or 0), 1),
         })
     order = {s: i for i, s in enumerate([0, 2, 4, 6, 23, 3, 5, 7, 16, 17])}

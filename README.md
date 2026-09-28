@@ -65,6 +65,15 @@ python -m pip install -r requirements.txt
 ```
 Your `.env` and run history are untouched: `.env` is git-ignored and history lives outside the repo, keyed to the install folder (moving the folder starts a fresh history).
 
+## Access from other devices
+Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network
+or over VPN, check **LAN_ACCESS** in Configuration, save, and restart `python launch.py`. The launcher prints
+the address to use (e.g. `http://192.168.1.20:8501`), as does the bottom of the Configuration tab.
+
+There is no login: anyone who can reach the port can use every tab, including Configuration and Shut down.
+Keep it to trusted networks. On Windows, allow Python through the firewall for **Private** networks only.
+Only `launch.py` applies this setting; `python -m streamlit run app.py` stays local-only.
+
 ## Shutting down
 Use **Shut down app** at the bottom of the sidebar, or press `Ctrl+C` in the terminal that launched it.
 Closing the browser tab alone leaves the local server running.
