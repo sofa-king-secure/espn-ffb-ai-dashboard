@@ -1,4 +1,4 @@
-# Mir's ESPN FFB AI Analyzer
+# ESPN FFB AI Analyzer
 
 Local Streamlit dashboard for ESPN Fantasy Football: matchup/spread board, lineup vs bench with injury flags,
 pending-moves banner, waiver explorer, AI strategy chat (Gemini / Claude / OpenAI-compatible), Word export,
@@ -64,6 +64,19 @@ git pull
 python -m pip install -r requirements.txt
 ```
 Your `.env` and run history are untouched: `.env` is git-ignored and history lives outside the repo, keyed to the install folder (moving the folder starts a fresh history).
+
+## Data sources for the AI
+Every run pulls ESPN (roster, projections, matchup, waivers, pending moves). Two optional layers add context:
+
+**Sleeper intel** (`SLEEPER_INTEL`, on by default, free, no key): injury status and body part, practice
+participation, depth-chart order, and the most added/dropped players across Sleeper in the last 24 hours. It's
+matched to your ESPN roster by player ID, flags ESPN/Sleeper disagreements, and shows in the lineup tables,
+the Waiver wire tab, and the AI's dossier. The ~5MB player index is cached and refreshed at most every 20 hours,
+per Sleeper's API guidelines. Trending data courtesy of Sleeper.
+
+**AI web search** (`AI_WEB_SEARCH`, off by default): lets Gemini (Google Search grounding) or Claude (web
+search tool) check breaking injury, practice and inactive news before recommending a move, and cite the source.
+Each search adds cost and a few seconds per answer. Not available for the OpenAI-compatible provider.
 
 ## Access from other devices
 Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network

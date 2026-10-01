@@ -70,7 +70,38 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
             out.append(f"\n**{pos}:** " + "; ".join(
                 f"{f['name']} ({f['pro_team']}, proj {f['projected']}, {f['pct_owned']}% rost"
                 + (f", {f['pct_change']:+.1f}%" if f.get("pct_change") is not None else "") + ")" for f in grp))
+    out += intel_markdown(snap.get("intel"))
     return "\n".join(out)
+
+
+def intel_markdown(intel: dict | None) -> list[str]:
+    if not intel:
+        return []
+    from .intel import flags
+    out = ["", f"## 7. External intel (Sleeper, pulled {intel.get('fetched_at', '?')})"]
+    for e in intel.get("errors", []):
+        out.append(f"- Unavailable: {e}")
+    fl = flags(intel)
+    if fl:
+        out.append("**Status disagreements / practice flags:**")
+        out += [f"- {x}" for x in fl]
+    rows = [r for r in intel.get("roster", []) if r["matched"]]
+    if rows:
+        h = ["Player", "ESPN status", "Sleeper injury", "Practice", "Depth chart"]
+        out += ["", _row(h), _row([":---"] * len(h))]
+        for r in rows:
+            out.append(_row([r["name"], r["espn_status"], (r["injury"] + (f" ({r['body_part']})" if r["body_part"] else "")) or "-",
+                             r["practice"] or "-", r["depth"] or "-"]))
+    for kind, title in (("trending_add", "Most added in the last 24h (all Sleeper leagues)"),
+                        ("trending_drop", "Most dropped in the last 24h (all Sleeper leagues)")):
+        rows = intel.get(kind, [])[:15]
+        if rows:
+            out.append(f"\n**{title}:** " + "; ".join(
+                f"{r['name']} ({r['pos']}, {r['team']}, {r['count']:,}"
+                + (f", {r['injury']}" if r["injury"] else "")
+                + (f", {r['in_my_league']}" if r["in_my_league"] else "") + ")" for r in rows))
+    out.append("\n*Trending data courtesy of Sleeper.*")
+    return out
 
 
 def lineup_table_for_ai(snap: dict) -> str:

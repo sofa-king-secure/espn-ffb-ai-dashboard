@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launcher for Mir's ESPN FFB AI Analyzer: `python launch.py` on Windows or macOS."""
+"""Launcher for ESPN FFB AI Analyzer: `python launch.py` on Windows or macOS."""
 import os
 import subprocess
 import sys

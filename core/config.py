@@ -85,6 +85,8 @@ ENV_SCHEMA: list[tuple[str, str, bool, str]] = [
     ("OPENAI_API_KEY", "", True, "OpenAI key (or any OpenAI-compatible server key)"),
     ("OPENAI_MODEL", "gpt-5.5", False, "Model id on the OpenAI-compatible endpoint"),
     ("OPENAI_BASE_URL", "", False, "Blank = api.openai.com. e.g. http://localhost:11434/v1 for Ollama"),
+    ("SLEEPER_INTEL", "true", False, "Add Sleeper injury, practice, depth-chart and trending data to every run (free, no key)"),
+    ("AI_WEB_SEARCH", "false", False, "Let Gemini/Claude search the web for breaking news. Adds cost and latency per request"),
     ("ENABLE_LINEUP_WRITES", "false", False, "Kill switch. Must be true before the dashboard can POST lineup changes"),
     ("LAN_ACCESS", "false", False, "Let other devices on your private network / VPN connect. Restart launch.py to apply"),
     ("FFB_DATA_DIR", "", False, "Optional override for snapshot/report storage"),
@@ -111,6 +113,8 @@ class Settings:
     openai_base_url: str = ""
     enable_lineup_writes: bool = False
     lan_access: bool = False
+    sleeper_intel: bool = True
+    ai_web_search: bool = False
     missing: list = field(default_factory=list)
 
     def ai_key_present(self) -> bool:
@@ -152,6 +156,8 @@ def load_settings() -> Settings:
         openai_base_url=_env_value("OPENAI_BASE_URL"),
         enable_lineup_writes=_as_bool(_env_value("ENABLE_LINEUP_WRITES", "false")),
         lan_access=_as_bool(_env_value("LAN_ACCESS", "false")),
+        sleeper_intel=_as_bool(_env_value("SLEEPER_INTEL", "true")),
+        ai_web_search=_as_bool(_env_value("AI_WEB_SEARCH", "false")),
     )
     for key, attr in (("ESPN_LEAGUE_ID", "league_id"), ("ESPN_TEAM_ID", "team_id"),
                       ("ESPN_SWID", "swid"), ("ESPN_S2", "espn_s2")):

@@ -21,12 +21,13 @@ from core.auth import (AuthStatus, espn_leagues_from_history, find_cookie_db, sa
                        sync_from_firefox)
 from core.config import ENV_PATH, ENV_SCHEMA, data_dir, lan_ips, load_settings, mask, update_env_file
 from core.dossier import build_markdown, spread_text
+from core.intel import build_intel
 from core.espn_client import (EspnError, IR_SLOT, NON_STARTING_SLOTS, SLOT_NAMES, UNSTARTABLE,
                               build_snapshot, connect, discover_my_teams)
 from core import espn_writer, lineup
 from core.report_docx import build_docx
 
-APP_TITLE = "Mir's ESPN FFB AI Analyzer"
+APP_TITLE = "ESPN FFB AI Analyzer"
 st.set_page_config(page_title=APP_TITLE, page_icon="🏈", layout="wide")
 
 # ---------------------------------------------------------------- look & feel
@@ -188,6 +189,11 @@ if run_live:
             league, team = connect(settings)
             st.write("Pulling matchup, roster, pending moves, waiver wire…")
             snap = build_snapshot(league, team, settings, week_offset=1 if week_mode == "next" else 0)
+            if settings.sleeper_intel:
+                st.write("Pulling Sleeper injury, practice, depth-chart and trending data…")
+                snap["intel"] = build_intel(snap)
+                for err in snap["intel"]["errors"]:
+                    st.write(f"→ {err}")
             dossier = build_markdown(snap)
             cache.save_run(snap, dossier)
             _adopt_run({"snapshot": snap, "dossier_md": dossier}, "live")
@@ -256,10 +262,18 @@ def _styled(df: pd.DataFrame):
 
 
 def _roster_df(players):
-    return pd.DataFrame([{
-        "Slot": p["slot"], "Player": p["name"] + (" 🔒" if p["locked"] else ""), "Pos": p["pos"],
-        "Team": p["pro_team"], "Opp": p["opponent"], "Status": p["status"] or "", "Proj": p["projected"],
-        "Pts": p["actual"]} for p in players])
+    intel = {r["player_id"]: r for r in ((st.session_state.snapshot or {}).get("intel") or {}).get("roster", [])}
+    rows = []
+    for p in players:
+        row = {"Slot": p["slot"], "Player": p["name"] + (" 🔒" if p["locked"] else ""), "Pos": p["pos"],
+               "Team": p["pro_team"], "Opp": p["opponent"], "Status": p["status"] or "", "Proj": p["projected"],
+               "Pts": p["actual"]}
+        if intel:
+            i = intel.get(p["player_id"], {})
+            row["Practice"] = i.get("practice", "")
+            row["Depth"] = i.get("depth", "")
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def _slot_units(slot_counts: dict) -> list[int]:
@@ -463,6 +477,14 @@ with tabs[2]:
                              "% Rost": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                              "% Chg": st.column_config.NumberColumn(format="%+.2f%%"),
                              "Proj": st.column_config.NumberColumn(format="%.1f")})
+        intel = snap.get("intel") or {}
+        if intel.get("trending_add"):
+            with st.expander("Trending on Sleeper: most added in the last 24h, across all Sleeper leagues"):
+                st.dataframe(pd.DataFrame(intel["trending_add"]).rename(columns={
+                    "name": "Player", "pos": "Pos", "team": "Team", "count": "Adds", "injury": "Injury",
+                    "in_my_league": "In my league"}), hide_index=True, width="stretch")
+                st.caption("Trending data courtesy of Sleeper. A blank 'In my league' usually means another "
+                           "team has him, or he's outside the free-agent pool pulled from ESPN.")
 
 
 # ---------------------------------------------------------------- AI strategy tab
@@ -574,7 +596,12 @@ with tabs[5]:
 
     with st.form("env_form"):
         updates = {}
-        groups = {"ESPN": ENV_SCHEMA[:7], "AI providers": ENV_SCHEMA[7:16], "Safety & storage": ENV_SCHEMA[16:]}
+        espn_keys = {"ESPN_LEAGUE_ID", "ESPN_TEAM_ID", "SEASON_YEAR", "ESPN_SWID", "ESPN_S2",
+                     "FIREFOX_AUTO_SYNC", "FIREFOX_PROFILE_PATH"}
+        safety_keys = {"ENABLE_LINEUP_WRITES", "LAN_ACCESS", "FFB_DATA_DIR"}
+        groups = {"ESPN": [f for f in ENV_SCHEMA if f[0] in espn_keys],
+                  "AI providers & intel": [f for f in ENV_SCHEMA if f[0] not in espn_keys | safety_keys],
+                  "Safety & storage": [f for f in ENV_SCHEMA if f[0] in safety_keys]}
         for gname, fields in groups.items():
             st.markdown(f"**{gname}**")
             cols = st.columns(2)
@@ -589,9 +616,10 @@ with tabs[5]:
                     opts = ["gemini", "anthropic", "openai"]
                     val = col.selectbox(key, opts, index=opts.index(settings.ai_provider)
                                         if settings.ai_provider in opts else 0, help=help_text)
-                elif key in ("FIREFOX_AUTO_SYNC", "ENABLE_LINEUP_WRITES", "LAN_ACCESS"):
+                elif key in ("FIREFOX_AUTO_SYNC", "ENABLE_LINEUP_WRITES", "LAN_ACCESS", "SLEEPER_INTEL", "AI_WEB_SEARCH"):
                     cur = {"FIREFOX_AUTO_SYNC": settings.firefox_auto_sync, "LAN_ACCESS": settings.lan_access,
-                           "ENABLE_LINEUP_WRITES": settings.enable_lineup_writes}[key]
+                           "ENABLE_LINEUP_WRITES": settings.enable_lineup_writes,
+                           "SLEEPER_INTEL": settings.sleeper_intel, "AI_WEB_SEARCH": settings.ai_web_search}[key]
                     val = "true" if col.checkbox(key, value=cur, help=help_text) else "false"
                 elif secret:
                     present = {"ESPN_SWID": settings.swid, "ESPN_S2": settings.espn_s2,

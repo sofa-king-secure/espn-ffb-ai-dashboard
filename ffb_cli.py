@@ -7,6 +7,7 @@ from core.ai_advisor import Advisor, gameplan_prompt
 from core.auth import sync_from_firefox
 from core.config import load_settings, data_dir
 from core.dossier import build_markdown
+from core.intel import build_intel
 from core.espn_client import EspnError, build_snapshot, connect
 
 
@@ -19,6 +20,8 @@ def main() -> int:
         print(f"[-] {exc}")
         return 1
     snap = build_snapshot(league, team, settings)
+    if settings.sleeper_intel:
+        snap["intel"] = build_intel(snap)
     dossier = build_markdown(snap)
     report, model = "", ""
     if settings.ai_key_present():

@@ -31,7 +31,7 @@ FOCUS_TEXT = {
 }
 
 
-def system_prompt(profile: str, focus: list[str]) -> str:
+def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> str:
     lines = [
         "You are an elite fantasy football co-manager and quantitative analyst for an ESPN league.",
         "Ground every recommendation in the dossier data. If the data doesn't show something "
@@ -39,6 +39,16 @@ def system_prompt(profile: str, focus: list[str]) -> str:
         f"Risk profile: {RISK_TEXT.get(profile, RISK_TEXT['floor'])}",
     ]
     lines += [FOCUS_TEXT[f] for f in focus if f in FOCUS_TEXT]
+    lines += [
+        "Section 7 of the dossier (when present) is external data from Sleeper: injury status, practice "
+        "participation, depth-chart order, and league-wide add/drop trends. Where ESPN and Sleeper disagree, "
+        "say so and favor the more recent practice information.",
+        "Value designated opportunity (depth-chart role, likely touches) over past fantasy points.",
+    ]
+    if web_search:
+        lines.append("You can search the web. Before recommending a start, sit, add or drop, check the latest "
+                     "injury, practice and inactive news for the players involved, and name the source and date "
+                     "of anything that changes the call.")
     return "\n".join(lines)
 
 
@@ -64,7 +74,8 @@ class Advisor:
     def __init__(self, settings: Settings, profile: str, focus: list[str]):
         self.settings = settings
         self.provider = settings.ai_provider
-        self.system = system_prompt(profile, focus)
+        self.web_search = settings.ai_web_search and settings.ai_provider in ("gemini", "anthropic")
+        self.system = system_prompt(profile, focus, self.web_search)
         self.history: list[dict] = []   # [{"role": "user"|"assistant", "content": str}]
         self.model_used = ""
         self._gemini_chat = None
@@ -87,6 +98,7 @@ class Advisor:
         """Stateless call that does not touch the chat history."""
         tmp = Advisor(self.settings, "floor", [])
         tmp.system = self.system
+        tmp.web_search = False  # structured/JSON requests stay fast, cheap and parseable
         return tmp.send(text)
 
     # -------------------------------------------------------------- gemini
@@ -98,6 +110,8 @@ class Advisor:
         )
         if not model.startswith("gemini-3"):
             kwargs["temperature"] = 0.2
+        if self.web_search:  # Google Search grounding: a built-in tool, unaffected by the AFC setting
+            kwargs["tools"] = [types.Tool(google_search=types.GoogleSearch())]
         return types.GenerateContentConfig(**kwargs)
 
     def _gemini_send(self, text: str) -> str:
@@ -135,8 +149,9 @@ class Advisor:
         if not self.settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY is empty.")
         client = anthropic.Anthropic(api_key=self.settings.anthropic_api_key)
+        extra = {"tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]} if self.web_search else {}
         resp = client.messages.create(model=self.settings.anthropic_model, max_tokens=8000,
-                                      system=self.system, messages=messages)
+                                      system=self.system, messages=messages, **extra)
         self.model_used = self.settings.anthropic_model
         return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
 
