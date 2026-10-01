@@ -68,6 +68,7 @@ class Advisor:
         self.history: list[dict] = []   # [{"role": "user"|"assistant", "content": str}]
         self.model_used = ""
         self._gemini_chat = None
+        self._gemini_client = None  # must outlive the chat: Client.__del__ closes the HTTP session
 
     # -------------------------------------------------------------- public
     def send(self, text: str) -> str:
@@ -103,7 +104,9 @@ class Advisor:
         from google import genai
         if not self.settings.gemini_api_key:
             raise RuntimeError("GEMINI_API_KEY is empty.")
-        client = genai.Client(api_key=self.settings.gemini_api_key)
+        if self._gemini_client is None:
+            self._gemini_client = genai.Client(api_key=self.settings.gemini_api_key)
+        client = self._gemini_client
         models = [self.settings.gemini_model]
         if self.settings.gemini_fallback_model and self._gemini_chat is None:
             models.append(self.settings.gemini_fallback_model)
@@ -111,12 +114,19 @@ class Advisor:
         for model in models:
             try:
                 if self._gemini_chat is None or self.model_used != model:
-                    self._gemini_chat = client.chats.create(model=model, config=self._gemini_config(model))
+                    # Rebuilt chats get the conversation so far, so an error or a model
+                    # fallback never silently drops the dossier context.
+                    from google.genai import types
+                    history = [types.Content(role="user" if m["role"] == "user" else "model",
+                                             parts=[types.Part(text=m["content"])]) for m in self.history]
+                    self._gemini_chat = client.chats.create(model=model, config=self._gemini_config(model),
+                                                            history=history)
                     self.model_used = model
                 return self._gemini_chat.send_message(text).text or ""
             except Exception as exc:
                 errors.append(f"{model}: {exc}")
                 self._gemini_chat = None
+                self._gemini_client = None  # start clean on the next attempt
         raise RuntimeError(" | ".join(errors))
 
     # -------------------------------------------------------------- anthropic
