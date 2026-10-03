@@ -39,7 +39,7 @@ st.markdown("""
         --good:#008a00; --shadow:0 1px 3px rgba(0,0,0,.12); }
 [data-testid="stAppViewContainer"], [data-testid="stMain"] { background: var(--page); }
 header[data-testid="stHeader"] { background: transparent; }
-.block-container { padding-top: 1rem; max-width: 1400px; }
+.block-container { padding-top: 1rem; max-width: none; padding-left: 2.5rem; padding-right: 2.5rem; }
 .num { font-variant-numeric: tabular-nums; }
 
 /* top bar: dark nav strip with a slanted red title block */
@@ -259,6 +259,11 @@ else:
     st.info("No data yet. Fill in the **Configuration** tab, then press **Run analysis**.")
 
 tabs = st.tabs(["Lineup", "Recommended lineup", "Confidence", "Waiver wire", "AI strategy", "Export", "Configuration"])
+
+
+def _fit(rows: int) -> int:
+    """Pixel height that shows every row, so tables grow instead of scrolling inside a box."""
+    return 38 + 35 * max(rows, 1)
 
 
 def _styled(df: pd.DataFrame):
@@ -484,10 +489,18 @@ with tabs[2]:
             st.dataframe(view[["Player", "Tier", "P(outscores)", "Pos", "Team", "Opp", "Kickoff", "Status", "Practice",
                                "Depth", "Proj", "Mean", "SD", "80th pct", "Season avg", "Last 3: actual (proj)",
                                "OPRK", "% Rost"]],
-                         hide_index=True, width="stretch",
-                         column_config={"P(outscores)": st.column_config.ProgressColumn(format="percent",
+                         hide_index=True, width="stretch", height=_fit(len(view)),
+                         column_config={"Player": st.column_config.Column(pinned=True),
+                                        "P(outscores)": st.column_config.ProgressColumn(format="percent",
                                                                                         min_value=0, max_value=1)})
         with st.expander("Model and calibration"):
+            dg = conf.get("diagnostics") or {}
+            if dg:
+                st.caption(f"History: {dg.get('box_samples', 0):,} projected-vs-actual samples from box scores of weeks "
+                           f"{', '.join(map(str, dg.get('box_weeks', []))) or 'none'}; player cards for "
+                           f"{dg.get('card_players', 0)} players.")
+                for err in dg.get("errors", []):
+                    st.warning(err)
             cal = conf["calibration"]
             if cal["pairs"]:
                 st.caption(f"Scored {cal['pairs']:,} same-position pairs from weeks {', '.join(map(str, cal['weeks']))}. "
@@ -541,7 +554,7 @@ with tabs[3]:
                                                  "projected": "Proj", "pct_owned": "% Rost", "pct_change": "% Chg",
                                                  "status": "Status", "on_waivers": "On waivers"})
             st.dataframe(show[["Player", "Pos", "Team", "Opp", "Proj", "% Rost", "% Chg", "Status", "On waivers"]],
-                         hide_index=True, width="stretch",
+                         hide_index=True, width="stretch", height=_fit(len(show)),
                          column_config={
                              "% Rost": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
                              "% Chg": st.column_config.NumberColumn(format="%+.2f%%"),

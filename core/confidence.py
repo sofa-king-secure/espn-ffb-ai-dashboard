@@ -9,8 +9,10 @@ Model
   * Each player's points ~ Normal(mean, sd).
   * mean = ESPN projection, cut for injury / practice / bye status.
   * sd = position-specific coefficient of variation x projection. The CV is measured
-    from this league's own history (ESPN projected vs actual, every completed week,
-    every player in the pool) and shrunk toward a prior when the sample is small.
+    from this league's own history: ESPN's projected vs actual points for every player in
+    every box score of every completed week (cached per week; past weeks never change),
+    shrunk toward a prior when the sample is small. ESPN's player cards only carry past
+    *actuals*, not past weekly projections, so box scores are the projection source.
   * P(B outscores A) = Phi((mean_B - mean_A) / sqrt(sd_A^2 + sd_B^2)).
 
 Calibration
@@ -107,19 +109,50 @@ def fetch_history(league, player_ids: list[int], max_period: int) -> dict:
     return out
 
 
-def fit_spreads(pool: list[dict], history: dict, current_period: int) -> dict:
-    """Position CVs measured from projected-vs-actual history, shrunk toward the prior."""
-    sq, proj_sum, n = {}, {}, {}
-    pos_of = {p["player_id"]: p["pos"] for p in pool}
-    for pid, h in history.items():
-        pos = pos_of.get(pid)
-        if pos not in PRIOR_CV:
+def box_history(league, meta: dict, current_period: int, weeks: int = 8) -> tuple[dict, list]:
+    """{scoring_period: {player_id: {"proj", "act", "pos"}}} for completed weeks, from league box scores.
+
+    Every rostered player in every matchup, so ~150 samples a week in a 10-team league.
+    Completed weeks are cached on disk and never refetched.
+    """
+    hist_dir = data_dir() / "history"
+    hist_dir.mkdir(parents=True, exist_ok=True)
+    out, errors = {}, []
+    for sp in range(max(1, current_period - weeks), current_period):
+        path = hist_dir / f"box-{meta['league_id']}-sp{sp}.json"
+        if path.exists():
+            out[sp] = {int(k): v for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
             continue
-        for sp, w in h["weeks"].items():
-            if sp >= current_period or "act" not in w or w.get("proj", 0) < 2:
+        try:
+            boxes = league.box_scores(week=sp)
+        except Exception as exc:
+            errors.append(f"Week {sp} box scores: {exc}")
+            continue
+        rows = {}
+        for m in boxes:
+            for lineup in (getattr(m, "home_lineup", []) or [], getattr(m, "away_lineup", []) or []):
+                for bp in lineup:
+                    rows[bp.playerId] = {"proj": float(getattr(bp, "projected_points", 0) or 0),
+                                         "act": float(getattr(bp, "points", 0) or 0),
+                                         "pos": getattr(bp, "position", "")}
+        if rows:
+            path.write_text(json.dumps(rows), encoding="utf-8")
+            out[sp] = rows
+        else:
+            errors.append(f"Week {sp}: box scores returned no players")
+    return out, errors
+
+
+def fit_spreads(box: dict) -> dict:
+    """Position CVs measured from projected-vs-actual box-score history, shrunk toward the prior."""
+    sq, proj_sum, n = {}, {}, {}
+    for rows in box.values():
+        for r in rows.values():
+            pos = r.get("pos")
+            if pos not in PRIOR_CV or r.get("proj", 0) < 2:
                 continue
-            sq[pos] = sq.get(pos, 0.0) + (w["act"] - w["proj"]) ** 2
-            proj_sum[pos] = proj_sum.get(pos, 0.0) + w["proj"]
+            sq[pos] = sq.get(pos, 0.0) + (r["act"] - r["proj"]) ** 2
+            proj_sum[pos] = proj_sum.get(pos, 0.0) + r["proj"]
             n[pos] = n.get(pos, 0) + 1
     model = {}
     for pos, prior in PRIOR_CV.items():
@@ -157,7 +190,14 @@ def build_confidence(league, snap: dict) -> dict:
     logged_ids = _recent_logged_ids(meta)
     history = fetch_history(league, [p["player_id"] for p in pool] + logged_ids,
                             getattr(league, "finalScoringPeriod", 18))
-    model = fit_spreads(pool, history, period)
+    card_players = sum(1 for h in history.values() if h["weeks"] or h["avg"] is not None)
+    box, box_errors = box_history(league, meta, period)
+    model = fit_spreads(box)
+    for sp, rows in box.items():  # merge past-week projections into card history (cards have actuals only)
+        for pid, r in rows.items():
+            w = history.setdefault(pid, {"weeks": {}, "avg": None})["weeks"].setdefault(sp, {})
+            w["proj"] = r["proj"]
+            w.setdefault("act", r["act"])
 
     try:
         oprk = league._get_positional_ratings(period)
@@ -171,7 +211,7 @@ def build_confidence(league, snap: dict) -> dict:
         h = history.get(p["player_id"], {"weeks": {}, "avg": None})
         done = sorted((sp, w) for sp, w in h["weeks"].items() if sp < period and "act" in w)[-3:]
         p["season_avg"] = h["avg"]
-        p["last3"] = " / ".join(f"{w['act']:.1f} ({w.get('proj', 0):.1f})" for _, w in done)
+        p["last3"] = " / ".join(f"{w['act']:.1f}" + (f" ({w['proj']:.1f})" if "proj" in w else "") for _, w in done)
         rank = (oprk.get(str(POS_IDS.get(p["pos"], 0))) or {}).get(str(p.get("opp_id")))
         p["oprk"] = rank
         p["practice"] = i.get("practice", "")
@@ -203,8 +243,10 @@ def build_confidence(league, snap: dict) -> dict:
                                        for t in ("Bench", "Free agent", "Waivers", "Trade")}})
 
     log_predictions(meta, pool)
+    diagnostics = {"card_players": card_players, "box_weeks": sorted(box),
+                   "box_samples": sum(len(r) for r in box.values()), "errors": box_errors}
     return {"built_at": datetime.now().isoformat(timespec="seconds"), "model": model, "slots": slots,
-            "pool_size": len(pool), "calibration": calibrate(meta, history)}
+            "pool_size": len(pool), "calibration": calibrate(meta, history), "diagnostics": diagnostics}
 
 
 # ---------------------------------------------------------------------------------- log + calibration
