@@ -643,10 +643,15 @@ with tabs[5]:
         stamp = f"wk{snap['meta']['week']}_{datetime.now():%Y%m%d_%H%M}"
         rec_moves = st.session_state.get("export_moves") or None
         c1, c2, c3, c4 = st.columns(4)
-        c1.download_button("Word report (.docx)",
-                           build_docx(snap, st.session_state.ai_report, st.session_state.ai_model, rec_moves),
-                           file_name=f"ffb_gameplan_{stamp}.docx", type="primary", width="stretch",
-                           mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        try:  # a Word-build failure must not take down the other tabs (they render in the same pass)
+            docx_bytes = build_docx(snap, st.session_state.ai_report, st.session_state.ai_model, rec_moves)
+        except Exception as exc:
+            docx_bytes = None
+            c1.error(f"Word export failed: {type(exc).__name__}: {exc}")
+        if docx_bytes:
+            c1.download_button("Word report (.docx)", docx_bytes,
+                               file_name=f"ffb_gameplan_{stamp}.docx", type="primary", width="stretch",
+                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         c2.download_button("Dossier (.md)", st.session_state.dossier, file_name=f"fantasy_status_{stamp}.md",
                            width="stretch")
         c3.download_button("AI report (.md)", st.session_state.ai_report or "No AI report in this run.",

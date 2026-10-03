@@ -65,9 +65,14 @@ def _markdown(doc, md: str):
     def flush_table():
         if not table_buf:
             return
-        rows = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in table_buf
-                if not re.match(r"^\|?\s*:?-{2,}", ln.strip())]
+        # split on unescaped pipes only ("\|" is a literal pipe inside a cell)
+        rows = [[c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", ln.strip().strip("|"))]
+                for ln in table_buf if not re.match(r"^\|?\s*:?-{2,}", ln.strip())]
         if rows:
+            width = len(rows[0])
+            # AI tables can be ragged: pad short rows, fold extra cells into the last column
+            rows = [r[:width - 1] + [" | ".join(r[width - 1:])] if len(r) > width else r + [""] * (width - len(r))
+                    for r in rows]
             _table(doc, rows[0], rows[1:])
         table_buf.clear()
 
