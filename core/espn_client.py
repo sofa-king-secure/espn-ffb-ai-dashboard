@@ -18,7 +18,7 @@ installed espn-api source (0.46.x):
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests as _requests
 import espn_api.requests.espn_requests as _espn_requests_mod
@@ -155,9 +155,29 @@ def _opp_label(sched) -> str:
 
 
 def _kickoff(sched) -> str:
+    """Kickoff in UTC, e.g. 'Sun 17:00 UTC' (same on every machine, no timezone guessing)."""
     if not sched or not sched[1]:
         return ""
-    return datetime.fromtimestamp(sched[1] / 1000).strftime("%a %I:%M %p").replace(" 0", " ")
+    return datetime.fromtimestamp(sched[1] / 1000, tz=timezone.utc).strftime("%a %H:%M UTC")
+
+
+TEAM_ALIASES = {"WAS": "WSH"}  # Sleeper -> ESPN abbreviations
+
+
+def game_for(snap: dict, pro_team: str) -> dict:
+    """{'opp': '@DET' | 'DET' | 'BYE', 'kickoff': 'Sun 17:00 UTC'} for an NFL team in this snapshot's week."""
+    team = TEAM_ALIASES.get(pro_team, pro_team)
+    return (snap.get("pro_games") or {}).get(team, {"opp": "", "kickoff": ""})
+
+
+def pro_games(league, week) -> dict:
+    sched = _pro_schedule(league, week)
+    games = {PRO_TEAM_MAP.get(tid, str(tid)): {"opp": _opp_label(g), "kickoff": _kickoff(g)} for tid, g in sched.items()}
+    if sched:  # teams with no game this week are on bye
+        for abbr in PRO_TEAM_MAP.values():
+            if abbr not in games and abbr != "None":
+                games[abbr] = {"opp": "BYE", "kickoff": ""}
+    return games
 
 
 # ----------------------------------------------------------------------------- snapshot
@@ -209,6 +229,7 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75, 
         "roster": roster,
         "slot_counts": slot_counts,
         "league_rosters": league_rosters,
+        "pro_games": pro_games(league, week),
         "pending": pending_transactions(league, team.team_id),
         "free_agents": free_agents(league, week, fa_pool_per_pos),
         "swid_owns_team": clean_swid.lower() in {o.lower() for o in owners} if owners else False,

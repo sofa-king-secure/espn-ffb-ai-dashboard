@@ -130,25 +130,29 @@ def build_docx(snap: dict, ai_report: str = "", ai_model: str = "", lineup_moves
                [[x["type"], x["status"], x["process_date"], x["partner"],
                  ", ".join(x["incoming"]) or "—", ", ".join(x["outgoing"]) or "—"] for x in snap["pending"]])
 
-    hdr = ["Slot", "Player", "Pos", "Opp", "Status", "Proj", "Pts"]
+    hdr = ["Slot", "Player", "Pos", "Opp", "Kickoff (UTC)", "Status", "Proj", "Pts"]
     for heading, grp in (("Starting lineup", [x for x in snap["roster"] if x["slot_id"] not in NON_STARTING_SLOTS]),
                          ("Bench & IR", [x for x in snap["roster"] if x["slot_id"] in NON_STARTING_SLOTS])):
         doc.add_heading(heading, level=1)
-        _table(doc, hdr, [[x["slot"], x["name"] + (" (locked)" if x["locked"] else ""), x["pos"], x["opponent"],
+        _table(doc, hdr, [[x["slot"], x["name"] + (" (locked)" if x["locked"] else ""), x["pos"], x["opponent"], x.get("kickoff", "").replace(" UTC", ""),
                            x["status"] or "OK", x["projected"], x["actual"]] for x in grp],
-               widths=[0.6, 2.2, 0.5, 0.7, 0.7, 0.6, 0.6])
+               widths=[0.5, 1.9, 0.45, 0.6, 1.0, 0.6, 0.5, 0.5])
 
     if lineup_moves:
         doc.add_heading("Recommended lineup changes", level=1)
-        _table(doc, ["Player", "From", "To", "Proj"],
-               [[x["name"], x["from"], x["to"], x["projected"]] for x in lineup_moves])
+        games = {p["player_id"]: p for p in snap["roster"]}
+        _table(doc, ["Player", "Opp", "Kickoff (UTC)", "From", "To", "Proj"],
+               [[x["name"], games.get(x["player_id"], {}).get("opponent", ""),
+                 games.get(x["player_id"], {}).get("kickoff", "").replace(" UTC", ""),
+                 x["from"], x["to"], x["projected"]] for x in lineup_moves])
 
     movers = sorted([f for f in snap["free_agents"] if f.get("pct_change") is not None],
                     key=lambda f: f["pct_change"], reverse=True)[:12]
     if movers:
         doc.add_heading("Waiver wire — top % add", level=1)
-        _table(doc, ["Player", "Pos", "Team", "Proj", "% Rost", "% Chg"],
-               [[f["name"], f["pos"], f["pro_team"], f["projected"], f"{f['pct_owned']}%",
+        _table(doc, ["Player", "Pos", "Team", "Opp", "Kickoff (UTC)", "Proj", "% Rost", "% Chg"],
+               [[f["name"], f["pos"], f["pro_team"], f.get("opponent", ""), f.get("kickoff", "").replace(" UTC", ""),
+                 f["projected"], f"{f['pct_owned']}%",
                  f"{f['pct_change']:+.2f}%"] for f in movers])
 
     if ai_report:

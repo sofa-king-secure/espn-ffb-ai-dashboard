@@ -23,7 +23,7 @@ from core.config import ENV_PATH, ENV_SCHEMA, data_dir, lan_ips, load_settings, 
 from core.dossier import build_markdown, spread_text
 from core.intel import build_intel
 from core.confidence import build_confidence
-from core.espn_client import (EspnError, IR_SLOT, NON_STARTING_SLOTS, SLOT_NAMES, UNSTARTABLE,
+from core.espn_client import (game_for, EspnError, IR_SLOT, NON_STARTING_SLOTS, SLOT_NAMES, UNSTARTABLE,
                               build_snapshot, connect, discover_my_teams)
 from core import espn_writer, lineup
 from core.report_docx import build_docx
@@ -277,7 +277,8 @@ def _roster_df(players):
     rows = []
     for p in players:
         row = {"Slot": p["slot"], "Player": p["name"] + (" 🔒" if p["locked"] else ""), "Pos": p["pos"],
-               "Team": p["pro_team"], "Opp": p["opponent"], "Status": p["status"] or "", "Proj": p["projected"],
+               "Team": p["pro_team"], "Opp": p["opponent"], "Kickoff": p.get("kickoff", ""),
+               "Status": p["status"] or "", "Proj": p["projected"],
                "Pts": p["actual"]}
         if intel:
             i = intel.get(p["player_id"], {})
@@ -342,7 +343,8 @@ with tabs[0]:
                 pick = cols[i % 3].selectbox(
                     SLOT_NAMES.get(slot, slot), options, index=options.index(default_pid),
                     format_func=lambda pid: "— empty —" if pid is None else
-                    f"{by_id[pid]['name']} ({by_id[pid]['status'] or 'OK'}, {by_id[pid]['projected']})",
+                    f"{by_id[pid]['name']} ({by_id[pid].get('opponent', '')} {by_id[pid].get('kickoff', '')}, "
+                    f"{by_id[pid]['status'] or 'OK'}, {by_id[pid]['projected']})",
                     key=f"scen_{i}_{slot}")
                 if pick is not None:
                     chosen.append(pick)
@@ -418,8 +420,8 @@ with tabs[1]:
                 rec = rec_fill.get(r["slot_id"], [])
                 cp = cur.pop(0) if cur else None
                 rp = rec.pop(0) if rec else None
-                r["Current"] = f"{cp['name']} ({cp['projected']})" if cp else "—"
-                r["Recommended"] = f"{rp['name']} ({rp['projected']})" if rp else "—"
+                r["Current"] = f"{cp['name']} ({cp['projected']}, {cp.get('opponent', '')} {cp.get('kickoff', '')})" if cp else "—"
+                r["Recommended"] = f"{rp['name']} ({rp['projected']}, {rp.get('opponent', '')} {rp.get('kickoff', '')})" if rp else "—"
                 r["Change"] = "" if (cp and rp and cp["player_id"] == rp["player_id"]) else "●"
             st.dataframe(pd.DataFrame(rows).drop(columns="slot_id"), hide_index=True, width="stretch")
 
@@ -554,10 +556,13 @@ with tabs[3]:
                            "feed doesn't include targets or snap share, so ask the AI tab about role/handcuff value.")
             else:
                 view = view.sort_values("projected", ascending=False)
+            if "kickoff" not in view.columns:  # runs cached before kickoff times existed
+                view = view.assign(kickoff="")
             show = view.head(40).rename(columns={"name": "Player", "pos": "Pos", "pro_team": "Team", "opponent": "Opp",
+                                                 "kickoff": "Kickoff",
                                                  "projected": "Proj", "pct_owned": "% Rost", "pct_change": "% Chg",
                                                  "status": "Status", "on_waivers": "On waivers"})
-            st.dataframe(show[["Player", "Pos", "Team", "Opp", "Proj", "% Rost", "% Chg", "Status", "On waivers"]],
+            st.dataframe(show[["Player", "Pos", "Team", "Opp", "Kickoff", "Proj", "% Rost", "% Chg", "Status", "On waivers"]],
                          hide_index=True, width="stretch", height=_fit(len(show)),
                          column_config={
                              "% Rost": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
@@ -566,9 +571,14 @@ with tabs[3]:
         intel = snap.get("intel") or {}
         if intel.get("trending_add"):
             with st.expander("Trending on Sleeper: most added in the last 24h, across all Sleeper leagues"):
-                st.dataframe(pd.DataFrame(intel["trending_add"]).rename(columns={
+                tr = pd.DataFrame(intel["trending_add"])
+                tr["Opp"] = tr["team"].map(lambda t: game_for(snap, t)["opp"])
+                tr["Kickoff"] = tr["team"].map(lambda t: game_for(snap, t)["kickoff"])
+                st.dataframe(tr.rename(columns={
                     "name": "Player", "pos": "Pos", "team": "Team", "count": "Adds", "injury": "Injury",
-                    "in_my_league": "In my league"}), hide_index=True, width="stretch")
+                    "in_my_league": "In my league"})[["Player", "Pos", "Team", "Opp", "Kickoff", "Adds", "Injury",
+                                                      "In my league"]],
+                    hide_index=True, width="stretch", height=_fit(len(tr)))
                 st.caption("Trending data courtesy of Sleeper. A blank 'In my league' usually means another "
                            "team has him, or he's outside the free-agent pool pulled from ESPN.")
 

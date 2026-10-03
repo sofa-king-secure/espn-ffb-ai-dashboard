@@ -21,7 +21,7 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
     out = [
         f"# ESPN Fantasy Dossier | Week {m['week']}",
         f"**Team:** {m['team_name']} | **Record:** {m['record']} | **Standing:** {m.get('standing')}",
-        f"*Snapshot: {m['fetched_at']} | Scoring period {m['scoring_period']} | Opp: '@DET' = away at DET, 'DET' = home vs DET; kickoff in local time*",
+        f"*Snapshot: {m['fetched_at']} | Scoring period {m['scoring_period']} | Opp: '@DET' = away at DET, 'DET' = home vs DET; kickoff times in UTC*",
         ("**UPCOMING WEEK (analysis only):** the lineup shown is my current lineup carried forward; live scores "
          "are zero. Plan start/sit and waiver moves for this week." if m.get("mode") == "next" else ""), "",
         "## 1. Pending Moves & Trade Pipeline",
@@ -70,7 +70,7 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
             out.append(f"\n**{pos}:** " + "; ".join(
                 f"{f['name']} ({f['pro_team']} {f['opponent']}{(' ' + f['kickoff']) if f.get('kickoff') else ''}, proj {f['projected']}, {f['pct_owned']}% rost"
                 + (f", {f['pct_change']:+.1f}%" if f.get("pct_change") is not None else "") + ")" for f in grp))
-    out += intel_markdown(snap.get("intel"))
+    out += intel_markdown(snap.get("intel"), snap)
     out += confidence_markdown(snap.get("confidence"))
     return "\n".join(out)
 
@@ -109,7 +109,13 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
     return out
 
 
-def intel_markdown(intel: dict | None) -> list[str]:
+def _game(snap: dict, pro_team: str) -> str:
+    from .espn_client import game_for
+    g = game_for(snap or {}, pro_team or "")
+    return " ".join(x for x in (g["opp"], g["kickoff"]) if x)
+
+
+def intel_markdown(intel: dict | None, snap: dict | None = None) -> list[str]:
     if not intel:
         return []
     from .intel import flags
@@ -122,17 +128,21 @@ def intel_markdown(intel: dict | None) -> list[str]:
         out += [f"- {x}" for x in fl]
     rows = [r for r in intel.get("roster", []) if r["matched"]]
     if rows:
-        h = ["Player", "ESPN status", "Sleeper injury", "Practice", "Depth chart"]
+        games = {p["player_id"]: p for p in (snap or {}).get("roster", [])}
+        h = ["Player", "Opp", "Kickoff", "ESPN status", "Sleeper injury", "Practice", "Depth chart"]
         out += ["", _row(h), _row([":---"] * len(h))]
         for r in rows:
-            out.append(_row([r["name"], r["espn_status"], (r["injury"] + (f" ({r['body_part']})" if r["body_part"] else "")) or "-",
+            g = games.get(r["player_id"], {})
+            out.append(_row([r["name"], g.get("opponent", ""), g.get("kickoff", ""), r["espn_status"],
+                             (r["injury"] + (f" ({r['body_part']})" if r["body_part"] else "")) or "-",
                              r["practice"] or "-", r["depth"] or "-"]))
     for kind, title in (("trending_add", "Most added in the last 24h (all Sleeper leagues)"),
                         ("trending_drop", "Most dropped in the last 24h (all Sleeper leagues)")):
         rows = intel.get(kind, [])[:15]
         if rows:
             out.append(f"\n**{title}:** " + "; ".join(
-                f"{r['name']} ({r['pos']}, {r['team']}, {r['count']:,}"
+                f"{r['name']} ({r['pos']}, {r['team']}"
+                + (f" {_game(snap, r['team'])}" if _game(snap, r["team"]) else "") + f", {r['count']:,}"
                 + (f", {r['injury']}" if r["injury"] else "")
                 + (f", {r['in_my_league']}" if r["in_my_league"] else "") + ")" for r in rows))
     out.append("\n*Trending data courtesy of Sleeper.*")
@@ -141,12 +151,13 @@ def intel_markdown(intel: dict | None) -> list[str]:
 
 def lineup_table_for_ai(snap: dict) -> str:
     """Compact machine-oriented roster table with ESPN slot ids for JSON lineup requests."""
-    lines = ["player_id | name | pos | status | proj | locked | current_slot_id | eligible_slot_ids"]
+    lines = ["player_id | name | pos | opp | kickoff_utc | status | proj | locked | current_slot_id | eligible_slot_ids"]
     for p in snap["roster"]:
         if p["slot_id"] == IR_SLOT:
             continue
         elig = [s for s in p["eligible_slot_ids"] if s not in NON_STARTING_SLOTS]
-        lines.append(f"{p['player_id']} | {p['name']} | {p['pos']} | {p['status'] or 'OK'}"
+        lines.append(f"{p['player_id']} | {p['name']} | {p['pos']} | {p.get('opponent', '')} | {p.get('kickoff', '')} | "
+                     f"{p['status'] or 'OK'}"
                      f"{' BYE' if p['on_bye'] else ''} | {p['projected']} | {p['locked']} | "
                      f"{p['slot_id']} | {elig}")
     caps = ", ".join(f"{sid} ({SLOT_NAMES.get(int(sid), sid)}) x{c}" for sid, c in snap["slot_counts"].items())
