@@ -476,6 +476,10 @@ with tabs[2]:
             st.caption(f"Adjusted {s0['note']}.")
         tiers = st.pills("Show", ["Bench", "Free agent", "Waivers", "Trade"], selection_mode="multi",
                          default=["Bench", "Free agent", "Waivers", "Trade"]) or []
+        avail = s0.get("available_by_tier") or {}
+        if avail:
+            st.caption("Eligible: " + " · ".join(f"{t} {n}" for t, n in avail.items())
+                       + " (top 25 per tier shown, best first)")
         alts = pd.DataFrame([a for a in s0["alternatives"] if a["tier"] in tiers])
         if alts.empty:
             st.caption("No alternatives in the selected tiers.")

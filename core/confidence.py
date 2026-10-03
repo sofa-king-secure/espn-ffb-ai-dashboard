@@ -44,6 +44,9 @@ SD_FLOOR = 2.5
 STATUS_MULT = {"Q": 0.85, "D": 0.35, "DTD": 0.90, "P": 0.97}
 PRACTICE_MULT = {"DNP": 0.85, "LIMITED": 0.95, "LP": 0.95}
 FA_PER_POSITION = 30       # free agents per position carried into the model (by projection)
+KEEP_PER_TIER = 25         # alternatives kept per tier per starter (cut per tier, not overall, so the
+                           # ~150 trade targets can't crowd out bench/free agents/waivers)
+TIERS = ("Bench", "Free agent", "Waivers", "Trade")
 BUCKETS = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.01)]
 
 
@@ -233,14 +236,16 @@ def build_confidence(league, snap: dict) -> dict:
                          "pct_owned": b.get("pct_owned"), "pct_change": b.get("pct_change"),
                          "p_outscores": round(p_outscores(b, s), 3)})
         alts.sort(key=lambda r: r["p_outscores"], reverse=True)
+        kept = [a for t in TIERS for a in [x for x in alts if x["tier"] == t][:KEEP_PER_TIER]]
+        kept.sort(key=lambda r: r["p_outscores"], reverse=True)
         slots.append({"slot": s["slot"], "slot_id": s["slot_id"], "name": s["name"], "player_id": s["player_id"],
                       "pos": s["pos"], "locked": s.get("locked", False), "mean": s["mean"], "sd": s["sd"],
                       "p80": s["p80"], "note": s.get("note", ""), "projected": s["projected"],
                       "season_avg": s["season_avg"], "last3": s["last3"], "oprk": s["oprk"],
                       "opponent": s.get("opponent", ""), "kickoff": s.get("kickoff", ""),
-                      "alternatives": alts[:40],
-                      "best_by_tier": {t: next((a for a in alts if a["tier"] == t), None)
-                                       for t in ("Bench", "Free agent", "Waivers", "Trade")}})
+                      "alternatives": kept,
+                      "available_by_tier": {t: sum(1 for a in alts if a["tier"] == t) for t in TIERS},
+                      "best_by_tier": {t: next((a for a in alts if a["tier"] == t), None) for t in TIERS}})
 
     log_predictions(meta, pool)
     diagnostics = {"card_players": card_players, "box_weeks": sorted(box),

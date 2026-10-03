@@ -75,7 +75,7 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
     return "\n".join(out)
 
 
-def confidence_markdown(conf: dict | None, per_slot: int = 5) -> list[str]:
+def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
     if not conf:
         return []
     out = ["", "## 8. Start/sit confidence (statistical model)",
@@ -93,13 +93,15 @@ def confidence_markdown(conf: dict | None, per_slot: int = 5) -> list[str]:
     for s in conf["slots"]:
         out.append(f"\n**{s['slot']}: {s['name']}** ({s['opponent']} {s['kickoff']}; mean {s['mean']} ± {s['sd']}, "
                    f"80th {s['p80']}{', LOCKED' if s['locked'] else ''}{', ' + s['note'] if s['note'] else ''})")
-        rows = s["alternatives"][:per_slot]
-        best = [a for a in s["best_by_tier"].values() if a and a not in rows]
+        # top few from EACH tier, so trade targets don't crowd out bench / free agents / waivers
+        rows = [a for t in ("Bench", "Free agent", "Waivers", "Trade")
+                for a in [x for x in s["alternatives"] if x["tier"] == t][:per_tier]]
+        rows.sort(key=lambda a: a["p_outscores"], reverse=True)
         if not rows:
             out.append("- No alternatives.")
             continue
         out += [_row(h), _row([":---"] * len(h))]
-        for a in rows + best:
+        for a in rows:
             out.append(_row([a["name"] + (f" ({a['owner']})" if a["owner"] else ""), a["tier"], f"{a['p_outscores']:.0%}",
                              a["opponent"], a["kickoff"], a["status"] or "OK", a["practice"] or "-", a["depth"] or "-",
                              f"{a['mean']}±{a['sd']}", a["p80"], a["season_avg"] if a["season_avg"] is not None else "-",
