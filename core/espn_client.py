@@ -125,10 +125,39 @@ def _status_code(raw_status) -> str:
 
 
 def _pro_schedule(league, week) -> dict:
+    """{proTeamId: (oppProTeamId, kickoff_epoch_ms, is_home)} for one scoring period.
+
+    Read from the raw pro schedule because espn-api's _get_pro_schedule drops home/away.
+    The payload covers the whole season, so it's fetched once per league object.
+    """
     try:
-        return league._get_pro_schedule(week)  # {proTeamId: (oppProTeamId, epoch_ms)}
+        cache = league.__dict__.setdefault("_ffb_pro_schedule", None)
+        if cache is None:
+            cache = league.espn_request.get_pro_schedule()
+            league.__dict__["_ffb_pro_schedule"] = cache
+        out = {}
+        for team in cache.get("settings", {}).get("proTeams", []):
+            games = (team.get("proGamesByScoringPeriod") or {}).get(str(week)) or []
+            if team.get("id") and games:
+                g = games[0]
+                home = team["id"] == g.get("homeProTeamId")
+                out[team["id"]] = (g.get("awayProTeamId") if home else g.get("homeProTeamId"), g.get("date"), home)
+        return out
     except Exception:
         return {}
+
+
+def _opp_label(sched) -> str:
+    """'DET' when home, '@DET' when away, 'BYE' when no game."""
+    if not sched:
+        return "BYE"
+    return ("" if sched[2] else "@") + PRO_TEAM_MAP.get(sched[0], "?")
+
+
+def _kickoff(sched) -> str:
+    if not sched or not sched[1]:
+        return ""
+    return datetime.fromtimestamp(sched[1] / 1000).strftime("%a %I:%M %p").replace(" 0", " ")
 
 
 # ----------------------------------------------------------------------------- snapshot
@@ -156,6 +185,7 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75, 
     else:
         matchup, box_players = _matchup(league, team, week)
         roster = _roster(league, team, scoring_period, box_players)
+    league_rosters = _league_rosters(league, team, scoring_period, week, future=bool(week_offset))
     owners = [m.get("id", "") if isinstance(m, dict) else str(m) for m in (team.owners or [])]
     _, clean_swid = sanitize_cookies("", settings.swid)
 
@@ -178,12 +208,29 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75, 
         "matchup": matchup,
         "roster": roster,
         "slot_counts": slot_counts,
+        "league_rosters": league_rosters,
         "pending": pending_transactions(league, team.team_id),
         "free_agents": free_agents(league, week, fa_pool_per_pos),
         "swid_owns_team": clean_swid.lower() in {o.lower() for o in owners} if owners else False,
     }
     snap["alerts"] = compute_alerts(snap)
     return snap
+
+
+def _league_rosters(league, my_team, scoring_period, week, future=False) -> list:
+    """Every other team's roster (trade targets), tagged with the fantasy team that owns each player."""
+    try:
+        data = _raw(league, "mRoster", scoringPeriodId=scoring_period)
+    except Exception:
+        return []
+    out = []
+    for t in league.teams:
+        if t.team_id == my_team.team_id:
+            continue
+        for p in _roster(league, t, scoring_period, {}, week=week, data=data, future=future):
+            p.update(fantasy_team=t.team_name, fantasy_team_id=t.team_id)
+            out.append(p)
+    return out
 
 
 def _starter_projection(roster: list) -> float:
@@ -253,10 +300,10 @@ def _roster(league, team, scoring_period, box_players, week=None, data=None, fut
         pid = e.get("playerId") or pl.get("id")
         bp = box_players.get(pid)
         pro_id = pl.get("proTeamId", 0)
-        opp = getattr(bp, "pro_opponent", None) if bp else None
+        sched = schedule.get(pro_id)
+        opp = _opp_label(sched) if sched else (getattr(bp, "pro_opponent", None) if bp else None)
         if not opp or opp == "None":
-            sched = schedule.get(pro_id)
-            opp = PRO_TEAM_MAP.get(sched[0], "?") if sched else "BYE"
+            opp = "BYE"
         on_bye = bool(getattr(bp, "on_bye_week", False)) if bp else (pro_id not in schedule and bool(schedule))
         proj = getattr(bp, "projected_points", None) if bp else None
         if not proj:
@@ -269,6 +316,9 @@ def _roster(league, team, scoring_period, box_players, week=None, data=None, fut
             "pos": _pos_for(pl),
             "pro_team": PRO_TEAM_MAP.get(pro_id, "FA"),
             "opponent": "BYE" if on_bye else opp,
+            "kickoff": "" if on_bye else _kickoff(sched),
+            "kickoff_ms": None if (on_bye or not sched) else sched[1],
+            "opp_id": None if (on_bye or not sched) else sched[0],
             "on_bye": on_bye,
             "slot_id": slot_id,
             "slot": SLOT_NAMES.get(slot_id, str(slot_id)),
@@ -371,7 +421,10 @@ def free_agents(league, week: int, per_position: int = 75) -> list:
                 "name": pl.get("fullName", ""),
                 "pos": pos,
                 "pro_team": PRO_TEAM_MAP.get(pro_id, "FA"),
-                "opponent": PRO_TEAM_MAP.get(sched[0], "?") if sched else "BYE",
+                "opponent": _opp_label(sched),
+                "kickoff": _kickoff(sched),
+                "kickoff_ms": sched[1] if sched else None,
+                "opp_id": sched[0] if sched else None,
                 "projected": _projection_from_raw(pl, week),
                 "pct_owned": round(float(own.get("percentOwned", 0) or 0), 1),
                 # ESPN field; None when the payload omits it so the UI can say "n/a"

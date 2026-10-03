@@ -78,6 +78,18 @@ per Sleeper's API guidelines. Trending data courtesy of Sleeper.
 search tool) check breaking injury, practice and inactive news before recommending a move, and cite the source.
 Each search adds cost and a few seconds per answer. Not available for the OpenAI-compatible provider.
 
+## Start/sit confidence
+The **Confidence** tab compares each starter against every player you could field this week: your bench,
+free agents, waivers, and other teams' rosters (trade). Each alternative gets the probability he outscores your
+starter, with every data point behind it: projection, injury and practice status, depth chart, opponent
+(`@DET` = away), kickoff, season average, last three weeks actual vs projected, and ESPN's opponent rank.
+
+How it works: each player's points are modeled as a range centered on ESPN's projection (cut for injury and
+practice status), with a spread measured from your league's own history of projected vs. actual points. Every live
+run logs its predictions (frozen at kickoff); once games are played, the next run grades them, and
+**Model and calibration** shows how often 60/70/80/90% calls actually came true. The same numbers go to the AI as
+section 8 of the dossier.
+
 ## Access from other devices
 Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network
 or over VPN, check **LAN_ACCESS** in Configuration, save, and restart `python launch.py`. The launcher prints

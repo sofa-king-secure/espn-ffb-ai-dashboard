@@ -44,6 +44,9 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
         "participation, depth-chart order, and league-wide add/drop trends. Where ESPN and Sleeper disagree, "
         "say so and favor the more recent practice information.",
         "Value designated opportunity (depth-chart role, likely touches) over past fantasy points.",
+        "Section 8 (when present) gives statistical start/sit probabilities against every obtainable player. "
+        "Use them as the quantitative baseline: when you recommend against the model, say why (news, role, "
+        "game script) and how confident you are.",
     ]
     if web_search:
         lines.append("You can search the web. Before recommending a start, sit, add or drop, check the latest "

@@ -22,6 +22,7 @@ from core.auth import (AuthStatus, espn_leagues_from_history, find_cookie_db, sa
 from core.config import ENV_PATH, ENV_SCHEMA, data_dir, lan_ips, load_settings, mask, update_env_file
 from core.dossier import build_markdown, spread_text
 from core.intel import build_intel
+from core.confidence import build_confidence
 from core.espn_client import (EspnError, IR_SLOT, NON_STARTING_SLOTS, SLOT_NAMES, UNSTARTABLE,
                               build_snapshot, connect, discover_my_teams)
 from core import espn_writer, lineup
@@ -194,6 +195,11 @@ if run_live:
                 snap["intel"] = build_intel(snap)
                 for err in snap["intel"]["errors"]:
                     st.write(f"→ {err}")
+            st.write("Scoring start/sit confidence across every obtainable player…")
+            try:
+                snap["confidence"] = build_confidence(league, snap)
+            except Exception as exc:
+                st.write(f"→ Confidence model skipped: {exc}")
             dossier = build_markdown(snap)
             cache.save_run(snap, dossier)
             _adopt_run({"snapshot": snap, "dossier_md": dossier}, "live")
@@ -252,7 +258,7 @@ if snap:
 else:
     st.info("No data yet. Fill in the **Configuration** tab, then press **Run analysis**.")
 
-tabs = st.tabs(["Lineup", "Recommended lineup", "Waiver wire", "AI strategy", "Export", "Configuration"])
+tabs = st.tabs(["Lineup", "Recommended lineup", "Confidence", "Waiver wire", "AI strategy", "Export", "Configuration"])
 
 
 def _styled(df: pd.DataFrame):
@@ -440,8 +446,71 @@ with tabs[1]:
                         st.caption("Press **Run analysis** to refresh the dashboard from ESPN.")
 
 
-# ---------------------------------------------------------------- Waiver tab
+# ---------------------------------------------------------------- Confidence tab
 with tabs[2]:
+    conf = (snap or {}).get("confidence")
+    if not snap:
+        st.caption("Run an analysis first.")
+    elif not conf:
+        st.caption("No confidence data in this run. Press Run analysis to build it.")
+    else:
+        st.caption(f"Chance each alternative outscores your starter this week, across {conf['pool_size']} players you "
+                   "could field: your bench, free agents, waivers, and other teams' rosters (via trade). "
+                   f"Built {conf['built_at'].replace('T', ' ')}.")
+        slots = conf["slots"]
+        pick = st.selectbox("Starter", range(len(slots)),
+                            format_func=lambda i: f"{slots[i]['slot']} · {slots[i]['name']}"
+                                                  f"{' 🔒' if slots[i]['locked'] else ''}")
+        s0 = slots[pick]
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Projection", f"{s0['projected']:.1f}")
+        c2.metric("Model mean ± sd", f"{s0['mean']:.1f} ± {s0['sd']:.1f}")
+        c3.metric("80th percentile", f"{s0['p80']:.1f}")
+        c4.metric("Opp / kickoff", f"{s0['opponent'] or '-'}", s0["kickoff"] or None, delta_color="off")
+        if s0["note"]:
+            st.caption(f"Adjusted {s0['note']}.")
+        tiers = st.pills("Show", ["Bench", "Free agent", "Waivers", "Trade"], selection_mode="multi",
+                         default=["Bench", "Free agent", "Waivers", "Trade"]) or []
+        alts = pd.DataFrame([a for a in s0["alternatives"] if a["tier"] in tiers])
+        if alts.empty:
+            st.caption("No alternatives in the selected tiers.")
+        else:
+            alts["Player"] = alts["name"] + alts["owner"].apply(lambda o: f" ({o})" if o else "")
+            view = alts.rename(columns={"p_outscores": "P(outscores)", "tier": "Tier", "pos": "Pos", "pro_team": "Team",
+                                        "opponent": "Opp", "kickoff": "Kickoff", "status": "Status",
+                                        "practice": "Practice", "depth": "Depth", "projected": "Proj",
+                                        "mean": "Mean", "sd": "SD", "p80": "80th pct", "season_avg": "Season avg",
+                                        "last3": "Last 3: actual (proj)", "oprk": "OPRK", "pct_owned": "% Rost"})
+            st.dataframe(view[["Player", "Tier", "P(outscores)", "Pos", "Team", "Opp", "Kickoff", "Status", "Practice",
+                               "Depth", "Proj", "Mean", "SD", "80th pct", "Season avg", "Last 3: actual (proj)",
+                               "OPRK", "% Rost"]],
+                         hide_index=True, width="stretch",
+                         column_config={"P(outscores)": st.column_config.ProgressColumn(format="percent",
+                                                                                        min_value=0, max_value=1)})
+        with st.expander("Model and calibration"):
+            cal = conf["calibration"]
+            if cal["pairs"]:
+                st.caption(f"Scored {cal['pairs']:,} same-position pairs from weeks {', '.join(map(str, cal['weeks']))}. "
+                           f"Brier score {cal['brier']} (lower is better; 0.25 = coin flip). A well-calibrated model's "
+                           "actual hit rate tracks its predicted rate in each row.")
+                st.dataframe(pd.DataFrame(cal["table"]).rename(columns={
+                    "bucket": "Predicted", "pairs": "Pairs", "avg_predicted": "Avg predicted",
+                    "actual_hit_rate": "Actually happened"}), hide_index=True, width="stretch")
+            else:
+                st.caption("No graded weeks yet. Each live run logs predictions; once a logged week's games are "
+                           "played, the next run grades them here.")
+            st.dataframe(pd.DataFrame([{"Pos": k, "CV used": v["cv"], "Measured CV": v["empirical_cv"],
+                                        "History samples": v["samples"], "Prior CV": v["prior_cv"]}
+                                       for k, v in conf["model"].items()]), hide_index=True, width="stretch")
+            st.caption("SD = CV × projection, measured from your league's projected-vs-actual history and blended "
+                       "with a prior until there's enough data. Injury/practice cuts to the mean are fixed "
+                       "assumptions (Q ×0.85, D ×0.35, DNP ×0.85, Limited ×0.95; Out/IR/bye = 0). "
+                       "OPRK is ESPN's opponent rank vs. the position, shown for context only: ESPN's projection "
+                       "already includes the matchup, so it isn't counted twice.")
+
+
+# ---------------------------------------------------------------- Waiver tab
+with tabs[3]:
     if not snap:
         st.caption("Run an analysis first.")
     else:
@@ -488,7 +557,7 @@ with tabs[2]:
 
 
 # ---------------------------------------------------------------- AI strategy tab
-with tabs[3]:
+with tabs[4]:
     if not snap:
         st.caption("Run an analysis first.")
     elif not settings.ai_key_present():
@@ -540,7 +609,7 @@ with tabs[3]:
 
 
 # ---------------------------------------------------------------- Export tab
-with tabs[4]:
+with tabs[5]:
     if not snap:
         st.caption("Run an analysis first.")
     else:
@@ -564,7 +633,7 @@ with tabs[4]:
 
 
 # ---------------------------------------------------------------- Configuration tab
-with tabs[5]:
+with tabs[6]:
     st.caption(f"Settings are stored in `{ENV_PATH}`. Secret fields are never displayed; leave them blank to keep the "
                "current value.")
     with st.container(border=True):

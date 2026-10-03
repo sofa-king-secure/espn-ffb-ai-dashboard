@@ -93,11 +93,12 @@ def build_intel(snapshot: dict) -> dict:
             "depth": _depth(sp) if sp else "",
             "roster_status": (sp or {}).get("status") or "",
         })
-    for f in snapshot.get("free_agents", []):
+    for f in snapshot.get("free_agents", []) + snapshot.get("league_rosters", []):
         sp = by_espn.get(str(f["player_id"]))
-        if sp and (sp.get("injury_status") or sp.get("depth_chart_order")):
-            intel["free_agents"][str(f["player_id"])] = {"injury": sp.get("injury_status") or "",
-                                                         "depth": _depth(sp)}
+        if sp:  # free agents and other teams' players, for the confidence model
+            intel["free_agents"][str(f["player_id"])] = {
+                "injury": sp.get("injury_status") or "", "depth": _depth(sp),
+                "practice": sp.get("practice_participation") or sp.get("practice_description") or ""}
 
     for kind in ("add", "drop"):
         try:
