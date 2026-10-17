@@ -47,6 +47,9 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
         "Section 8 (when present) gives statistical start/sit probabilities against every obtainable player. "
         "Use them as the quantitative baseline: when you recommend against the model, say why (news, role, "
         "game script) and how confident you are.",
+        "CLOSE CALLS in section 8 are coin flips already settled by a fixed tiebreak (health, depth-chart role, "
+        "current lineup). Follow each verdict and label it a close call. Override one only for new information "
+        "the dossier doesn't contain, and name that information. Never flip a close call on a projection gap alone.",
     ]
     if web_search:
         lines.append("You can search the web. Before recommending a start, sit, add or drop, check the latest "
@@ -55,8 +58,21 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
     return "\n".join(lines)
 
 
-def gameplan_prompt(dossier_md: str) -> str:
-    return f"""{dossier_md}
+def gameplan_prompt(dossier_md: str, previous: str = "", previous_at: str = "") -> str:
+    prior = ""
+    if previous:
+        prior = f"""
+
+---
+YOUR PREVIOUS GAME PLAN FOR THIS SAME WEEK (generated {previous_at or 'earlier'}):
+
+{previous}
+---
+Consistency rule: keep every start/sit and waiver call from the previous plan unless something has actually
+changed since then: an injury or practice update, a depth-chart move, a lineup lock, sourced news, a
+close-call verdict in section 8 that now points the other way, or a change in my risk profile or focus settings. For each call you reverse, add a line
+"Changed: <call> because <what changed>". Do not reverse a call because a projection moved slightly."""
+    return f"""{dossier_md}{prior}
 
 Based on the preceding dossier, produce this week's gameplan:
 

@@ -32,7 +32,8 @@ def main() -> int:
     if settings.ai_key_present():
         try:
             adv = Advisor(settings, "floor", ["current_week"])
-            report, model = adv.send(gameplan_prompt(dossier)), adv.model_used
+            prev, prev_at = cache.previous_report(settings.league_id, settings.team_id, snap["meta"]["week"])
+            report, model = adv.send(gameplan_prompt(dossier, prev, prev_at)), adv.model_used
         except Exception as exc:
             print(f"[!] AI step failed: {exc}")
     path = cache.save_run(snap, dossier, report, model)

@@ -208,7 +208,8 @@ if run_live:
                 st.write(f"Requesting game plan from {settings.ai_provider}…")
                 try:
                     adv = _advisor(profile, focus)
-                    st.session_state.ai_report = adv.send(gameplan_prompt(dossier))
+                    prev, prev_at = cache.previous_report(settings.league_id, settings.team_id, snap["meta"]["week"])
+                    st.session_state.ai_report = adv.send(gameplan_prompt(dossier, prev, prev_at))
                     st.session_state.ai_model = adv.model_used
                     cache.update_latest_report(st.session_state.ai_report, adv.model_used,
                                                settings.league_id, settings.team_id)
@@ -476,6 +477,11 @@ with tabs[2]:
         c4.metric("Opp / kickoff", f"{s0['opponent'] or '-'}", s0["kickoff"] or None, delta_color="off")
         if s0["note"]:
             st.caption(f"Adjusted {s0['note']}.")
+        if s0.get("decision"):
+            st.info(f"**Close-call decision:** {s0['decision']['verdict']}. Tiebreak: {s0['decision']['reason']}.")
+            if len(s0.get("close_calls", [])) > 1:
+                st.caption("Comparisons in the 40–60% band: " + " · ".join(
+                    f"{c['alt']} {c['p_outscores']:.0%} → {c['verdict']}" for c in s0["close_calls"]))
         tiers = st.pills("Show", ["Bench", "Free agent", "Waivers", "Trade"], selection_mode="multi",
                          default=["Bench", "Free agent", "Waivers", "Trade"]) or []
         avail = s0.get("available_by_tier") or {}
@@ -599,7 +605,8 @@ with tabs[4]:
                     adv = _advisor(profile, focus)
                     adv.history, adv._gemini_chat = [], None
                     st.session_state.chat = []
-                    st.session_state.ai_report = adv.send(gameplan_prompt(st.session_state.dossier))
+                    prev, prev_at = cache.previous_report(settings.league_id, settings.team_id, snap["meta"]["week"])
+                    st.session_state.ai_report = adv.send(gameplan_prompt(st.session_state.dossier, prev, prev_at))
                     st.session_state.ai_model = adv.model_used
                     cache.update_latest_report(st.session_state.ai_report, adv.model_used,
                                                settings.league_id, settings.team_id)

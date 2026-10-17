@@ -72,3 +72,17 @@ def load_run(path: Path | None = None, league_id: str = "", team_id: str = "") -
         return None
     return json.loads(Path(target).read_text(encoding="utf-8"))
 
+
+
+def previous_report(league_id: str, team_id: str, week) -> tuple[str, str]:
+    """(report, generated_at) of the newest saved run for this league/team/week that has an AI game plan."""
+    for path in list_runs(league_id, team_id):
+        if f"-wk{week}-" not in path.name:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if data.get("ai_report"):
+            return data["ai_report"], data.get("snapshot", {}).get("meta", {}).get("fetched_at", "")
+    return "", ""

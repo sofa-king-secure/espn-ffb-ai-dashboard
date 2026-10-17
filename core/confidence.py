@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -48,6 +49,81 @@ KEEP_PER_TIER = 25         # alternatives kept per tier per starter (cut per tie
                            # ~150 trade targets can't crowd out bench/free agents/waivers)
 TIERS = ("Bench", "Free agent", "Waivers", "Trade")
 BUCKETS = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.01)]
+
+# Close calls: when the model is this close, a fixed tiebreak decides, so refreshes don't flip-flop.
+CLOSE_BAND = (0.40, 0.60)
+STATUS_RANK = {"": 0, "P": 0, "DTD": 1, "Q": 1, "D": 2, "O": 3, "IR": 3, "SSPD": 3}
+PRACTICE_RANK = {"": 0, "FULL": 0, "FP": 0, "LIMITED": 1, "LP": 1, "DNP": 2}
+
+
+def _health(p: dict) -> tuple[int, int]:
+    status = 3 if p.get("on_bye") else STATUS_RANK.get(p.get("status") or "", 1)
+    return status, PRACTICE_RANK.get((p.get("practice") or "").upper(), 0)
+
+
+def _health_text(p: dict) -> str:
+    bits = [p.get("status") or "healthy"]
+    if p.get("practice"):
+        bits.append(f"practice {p['practice']}")
+    return ", ".join(bits)
+
+
+def _depth_order(p: dict) -> int | None:
+    m = re.search(r"(\d+)$", p.get("depth") or "")
+    return int(m.group(1)) if m else None
+
+
+def _decide_close_calls(slots: list[dict], pool: list[dict]) -> None:
+    """One decision per slot; a player used in one slot can't be used again.
+
+    The weakest starter picks first (worst health, then lowest on the depth chart, then
+    lowest model mean), so a better bench player replaces the starter who most needs
+    replacing rather than whichever slot happens to come first. Among alternatives that win
+    their tiebreak, prefer bench (no transaction), then healthier, then higher on the depth
+    chart, then the model's edge."""
+    by_id = {p["player_id"]: p for p in pool}
+    used: set = set()
+
+    def weakest_first(sl):
+        st = by_id.get(sl["player_id"], {})
+        h = _health(st)
+        return (-h[0], -h[1], -(_depth_order(st) or 99), sl["mean"])
+
+    for sl in sorted(slots, key=weakest_first):
+        winners = [c for c in sl.get("close_calls", []) if c["winner"] == c["alt"]]
+        winners.sort(key=lambda c: (c["tier"] != "Bench",
+                                    _health(by_id.get(c.get("alt_id"), {})),
+                                    _depth_order(by_id.get(c.get("alt_id"), {})) or 99,
+                                    -c["p_outscores"]))
+        pick = next((c for c in winners if c.get("alt_id") not in used), None)
+        if pick:
+            used.add(pick["alt_id"])
+            sl["decision"] = {"verdict": pick["verdict"], "reason": pick["reason"], "p_outscores": pick["p_outscores"]}
+        elif sl.get("close_calls"):
+            beaten_elsewhere = [c["alt"] for c in winners]
+            sl["decision"] = {"verdict": f"KEEP {sl['name']}",
+                              "reason": ("closer alternatives are assigned to other slots: " + ", ".join(beaten_elsewhere))
+                              if beaten_elsewhere else "current lineup (no churn on a coin flip)",
+                              "p_outscores": max(c["p_outscores"] for c in sl["close_calls"])}
+
+
+def tiebreak(starter: dict, alt: dict) -> tuple[bool, str]:
+    """(alt_wins, reason). Order: health, then depth-chart role, then current lineup.
+
+    A fourth step (risk profile: 80th percentile vs mean) only matters when neither
+    player is already starting; every comparison here includes the current starter,
+    so step 3 always settles it.
+    """
+    hs, ha = _health(starter), _health(alt)
+    if hs != ha:
+        return ha < hs, f"health ({alt['name']}: {_health_text(alt)}; {starter['name']}: {_health_text(starter)})"
+    ds, da = _depth_order(starter), _depth_order(alt)
+    if ds is not None or da is not None:
+        ds_, da_ = (ds if ds is not None else 99), (da if da is not None else 99)
+        if ds_ != da_:
+            return da_ < ds_, (f"depth chart ({alt['name']}: {alt.get('depth') or 'not listed'}; "
+                               f"{starter['name']}: {starter.get('depth') or 'not listed'})")
+    return False, "current lineup (no churn on a coin flip)"
 
 
 # ---------------------------------------------------------------------------------- math
@@ -238,15 +314,32 @@ def build_confidence(league, snap: dict) -> dict:
         alts.sort(key=lambda r: r["p_outscores"], reverse=True)
         kept = [a for t in TIERS for a in [x for x in alts if x["tier"] == t][:KEEP_PER_TIER]]
         kept.sort(key=lambda r: r["p_outscores"], reverse=True)
+        close = []
+        for a in kept:
+            if s.get("locked") or a["tier"] == "Trade" or not (CLOSE_BAND[0] <= a["p_outscores"] <= CLOSE_BAND[1]):
+                continue
+            alt_full = next(b for b in pool if b["player_id"] == a["player_id"])
+            if alt_full.get("locked"):
+                continue  # already kicked off: can't be moved in
+            alt_wins, reason = tiebreak(s, alt_full)
+            verb = "ADD and START" if a["tier"] in ("Free agent", "Waivers") else "START"
+            close.append({"alt": a["name"], "alt_id": a["player_id"], "tier": a["tier"], "p_outscores": a["p_outscores"],
+                          "winner": a["name"] if alt_wins else s["name"],
+                          "verdict": (f"{verb} {a['name']} over {s['name']}" if alt_wins
+                                      else f"KEEP {s['name']} over {a['name']}"),
+                          "reason": reason})
         slots.append({"slot": s["slot"], "slot_id": s["slot_id"], "name": s["name"], "player_id": s["player_id"],
                       "pos": s["pos"], "locked": s.get("locked", False), "mean": s["mean"], "sd": s["sd"],
                       "p80": s["p80"], "note": s.get("note", ""), "projected": s["projected"],
                       "season_avg": s["season_avg"], "last3": s["last3"], "oprk": s["oprk"],
                       "opponent": s.get("opponent", ""), "kickoff": s.get("kickoff", ""),
+                      "status": s.get("status", ""), "practice": s.get("practice", ""), "depth": s.get("depth", ""),
                       "alternatives": kept,
+                      "close_calls": close[:6],
                       "available_by_tier": {t: sum(1 for a in alts if a["tier"] == t) for t in TIERS},
                       "best_by_tier": {t: next((a for a in alts if a["tier"] == t), None) for t in TIERS}})
 
+    _decide_close_calls(slots, pool)
     log_predictions(meta, pool)
     diagnostics = {"card_players": card_players, "box_weeks": sorted(box),
                    "box_samples": sum(len(r) for r in box.values()), "errors": box_errors}

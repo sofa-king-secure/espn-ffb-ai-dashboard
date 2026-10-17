@@ -83,6 +83,14 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
            "players (bench, free agents, waivers, other teams via trade). Points ~ Normal(mean, sd); sd = position CV "
            "x projection, CV measured from this league's projected-vs-actual history: " +
            ", ".join(f"{k} {v['cv']} (n={v['samples']})" for k, v in conf["model"].items()) + "."]
+    decided = [sl for sl in conf["slots"] if sl.get("decision")]
+    if decided:
+        out.append("\n**CLOSE-CALL DECISIONS (model within 40-60%), one per slot, settled by a fixed tiebreak: "
+                   "health, then depth-chart role, then current lineup; no player is used in two slots.** Follow "
+                   "these unless there is NEW information (injury/practice update, depth-chart change, sourced news) "
+                   "that the dossier doesn't reflect:")
+        out += [f"- {sl['slot']} ({sl['name']}): {sl['decision']['verdict']}. Tiebreak: {sl['decision']['reason']}."
+                for sl in decided]
     cal = conf.get("calibration") or {}
     if cal.get("pairs"):
         out.append(f"Calibration so far: {cal['pairs']:,} graded pairs, Brier {cal['brier']}; " + "; ".join(

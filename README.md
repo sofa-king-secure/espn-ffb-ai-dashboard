@@ -90,6 +90,13 @@ run logs its predictions (frozen at kickoff); once games are played, the next ru
 **Model and calibration** shows how often 60/70/80/90% calls actually came true. The same numbers go to the AI as
 section 8 of the dossier.
 
+**Close calls don't flip on refresh.** When the model has a starter and an alternative within 40–60%, a fixed
+tiebreak decides: health first, then depth-chart role, then your current lineup. Each slot gets one decision (the
+weakest starter picks first; no player is used twice; players already kicked off are left out). The AI follows
+those decisions, and each new game plan sees the previous one for the same week and must keep its calls unless
+something actually changed (injury or practice news, depth chart, lineup lock, sourced news, or your risk/focus
+settings), saying what changed when it reverses one. The statistical probabilities themselves are unchanged.
+
 ## Access from other devices
 Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network
 or over VPN, check **LAN_ACCESS** in Configuration, save, and restart `python launch.py`. The launcher prints
