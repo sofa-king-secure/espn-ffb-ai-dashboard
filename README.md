@@ -97,6 +97,14 @@ those decisions, and each new game plan sees the previous one for the same week 
 something actually changed (injury or practice news, depth chart, lineup lock, sourced news, or your risk/focus
 settings), saying what changed when it reverses one. The statistical probabilities themselves are unchanged.
 
+**Schedule and availability.** Every run adds each player's next four opponents with ESPN's rank of that
+defense against his position (1 = allows the fewest points, 32 = the most; the direction is checked against ESPN's
+own points-allowed numbers each run), plus games played vs. team games and a flag for players just back from
+injury. These appear in the Confidence and Waiver wire tabs and in dossier section 9. Before recommending any
+add, drop or trade, the AI must weigh the schedule ahead, separate missed-time from poor play, and name the
+alternative. It only recommends moves that are real improvements: "Stand pat" is a valid answer, optionally with
+up to two players to watch and what would have to change.
+
 ## Access from other devices
 Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network
 or over VPN, check **LAN_ACCESS** in Configuration, save, and restart `python launch.py`. The launcher prints

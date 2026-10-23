@@ -170,6 +170,63 @@ def game_for(snap: dict, pro_team: str) -> dict:
     return (snap.get("pro_games") or {}).get(team, {"opp": "", "kickoff": ""})
 
 
+POS_TO_ID = {v: k for k, v in DEFAULT_POSITION.items()}
+
+
+def positional_ratings(league, week) -> tuple[dict, str]:
+    """{pos_id(str): {opp_team_id(str): {"rank", "avg"}}} plus a direction check.
+
+    ESPN's opponent rank: 1 = allows the FEWEST fantasy points to that position (toughest),
+    32 = the most (easiest). espn-api keeps only the rank; we keep ESPN's points-allowed
+    average too, and verify the direction from it every run instead of trusting a convention.
+    """
+    try:
+        data = league.espn_request.league_get(params={"view": "mPositionalRatings", "scoringPeriodId": week})
+    except Exception as exc:
+        return {}, f"unavailable ({exc})"
+    out = {}
+    for pos, rating in (data.get("positionAgainstOpponent", {}).get("positionalRatings", {}) or {}).items():
+        out[str(pos)] = {str(t): {"rank": v.get("rank"), "avg": v.get("average")}
+                         for t, v in (rating.get("ratingsByOpponent") or {}).items()}
+    checks = []
+    for teams in out.values():
+        rows = sorted((v["rank"], v["avg"]) for v in teams.values() if v["rank"] and v["avg"] is not None)
+        if len(rows) > 8:
+            checks.append(rows[0][1] < rows[-1][1])
+    if not checks:
+        direction = "unverified"
+    elif all(checks):
+        direction = "verified: rank 1 allows the fewest points (toughest), 32 the most (easiest)"
+    else:
+        direction = "WARNING: ESPN ranks look inverted this run; read rank 1 as easiest"
+    return out, direction
+
+
+def schedule_ahead(league, snap: dict, players: list[dict], weeks: int = 4) -> dict:
+    """Each player's next N games: opponent and ESPN's rank of that defense vs his position."""
+    base = int(snap["meta"]["week"])
+    ratings, direction = positional_ratings(league, snap["meta"]["scoring_period"])
+    by_abbr = {v: k for k, v in PRO_TEAM_MAP.items()}
+    sched = {w: _pro_schedule(league, w) for w in range(base, base + weeks)}
+    out = {}
+    for p in players:
+        team_id = by_abbr.get(p.get("pro_team"))
+        pos_id = str(POS_TO_ID.get(p.get("pos"), ""))
+        games, ranks = [], []
+        for w in range(base, base + weeks):
+            g = sched[w].get(team_id) if team_id is not None else None
+            if not g:
+                games.append({"week": w, "opp": "BYE", "rank": None})
+                continue
+            r = ((ratings.get(pos_id) or {}).get(str(g[0])) or {}).get("rank")
+            games.append({"week": w, "opp": _opp_label(g), "rank": r})
+            if r:
+                ranks.append(r)
+        out[str(p["player_id"])] = {"games": games,
+                                    "avg_rank": round(sum(ranks) / len(ranks), 1) if ranks else None}
+    return {"weeks": list(range(base, base + weeks)), "direction": direction, "players": out}
+
+
 def pro_games(league, week) -> dict:
     sched = _pro_schedule(league, week)
     games = {PRO_TEAM_MAP.get(tid, str(tid)): {"opp": _opp_label(g), "kickoff": _kickoff(g)} for tid, g in sched.items()}
@@ -235,6 +292,10 @@ def build_snapshot(league, team, settings: Settings, fa_pool_per_pos: int = 75, 
         "swid_owns_team": clean_swid.lower() in {o.lower() for o in owners} if owners else False,
     }
     snap["alerts"] = compute_alerts(snap)
+    try:  # next 4 weeks for my roster, the free-agent pool and trade targets
+        snap["schedule_ahead"] = schedule_ahead(league, snap, snap["roster"] + snap["free_agents"] + snap["league_rosters"])
+    except Exception as exc:
+        snap["schedule_ahead"] = {"weeks": [], "direction": f"unavailable ({exc})", "players": {}}
     return snap
 
 

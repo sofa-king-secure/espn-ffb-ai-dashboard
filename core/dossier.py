@@ -58,11 +58,12 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
     out += ["", "## 6. Waiver Wire — Top % Add Movers"]
     fa = [f for f in snap["free_agents"] if f.get("pct_change") is not None]
     fa.sort(key=lambda f: f["pct_change"], reverse=True)
-    h = ["Player", "Pos", "Team", "Opp", "Kickoff", "Proj", "% Rost", "% Chg", "Status"]
+    h = ["Player", "Pos", "Team", "Opp", "Kickoff", "Proj", "% Rost", "% Chg", "Status", "Next 4 opp rank (avg)"]
     out += [_row(h), _row([":---"] * len(h))]
     for f in fa[:fa_limit]:
         out.append(_row([f["name"], f["pos"], f["pro_team"], f["opponent"], f.get("kickoff", ""), f["projected"],
-                         f"{f['pct_owned']}%", f"{f['pct_change']:+.2f}%", f["status"] or "OK"]))
+                         f"{f['pct_owned']}%", f"{f['pct_change']:+.2f}%", f["status"] or "OK",
+                         _next4(snap, f["player_id"])]))
     for pos in ("QB", "RB", "WR", "TE", "D/ST", "K"):
         grp = sorted([f for f in snap["free_agents"] if f["pos"] == pos],
                      key=lambda f: (f.get("pct_change") or 0, f["projected"]), reverse=True)[:5]
@@ -72,7 +73,36 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
                 + (f", {f['pct_change']:+.1f}%" if f.get("pct_change") is not None else "") + ")" for f in grp))
     out += intel_markdown(snap.get("intel"), snap)
     out += confidence_markdown(snap.get("confidence"))
+    out += schedule_markdown(snap)
     return "\n".join(out)
+
+
+def _next4(snap: dict, player_id) -> str:
+    sa = ((snap.get("schedule_ahead") or {}).get("players") or {}).get(str(player_id)) or {}
+    if not sa:
+        return "-"
+    games = " ".join(f"{g['opp']}({g['rank']})" if g["rank"] else g["opp"] for g in sa["games"])
+    return f"{sa['avg_rank']} [{games}]" if sa.get("avg_rank") else games
+
+
+def schedule_markdown(snap: dict) -> list[str]:
+    sa = snap.get("schedule_ahead") or {}
+    if not sa.get("players"):
+        return []
+    weeks = sa.get("weeks", [])
+    out = ["", f"## 9. Schedule ahead (weeks {weeks[0]}-{weeks[-1]}) - ESPN opponent rank vs. each player's position",
+           f"Rank 1 = that defense allows the FEWEST fantasy points to the position (toughest); 32 = the most (easiest). "
+           f"Direction check against ESPN's points-allowed data: {sa.get('direction', 'unverified')}. "
+           "Avg = mean rank over the games shown (higher = easier stretch)."]
+    h = ["Player", "Pos", "Team"] + [f"Wk {w}" for w in weeks] + ["Avg rank"]
+    out += [_row(h), _row([":---"] * len(h))]
+    for p in snap["roster"]:
+        row = (sa["players"].get(str(p["player_id"])) or {})
+        games = row.get("games") or []
+        out.append(_row([p["name"], p["pos"], p["pro_team"]]
+                        + [f"{g['opp']} ({g['rank']})" if g.get("rank") else g.get("opp", "-") for g in games]
+                        + [row.get("avg_rank") or "-"]))
+    return out
 
 
 def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
@@ -97,10 +127,12 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
             f"{r['bucket']} predicted -> {r['actual_hit_rate']:.0%} happened (n={r['pairs']})"
             for r in cal["table"] if r["pairs"]) + ".")
     h = ["Alternative", "Tier", "P", "Opp", "Kickoff", "Status", "Practice", "Depth", "Mean±SD", "80th",
-         "Season avg", "Last 3 act (proj)", "OPRK"]
+         "Season avg", "GP", "Returned", "Last 3 act (proj)", "OPRK", "Next 4 avg rank"]
     for s in conf["slots"]:
         out.append(f"\n**{s['slot']}: {s['name']}** ({s['opponent']} {s['kickoff']}; mean {s['mean']} ± {s['sd']}, "
-                   f"80th {s['p80']}{', LOCKED' if s['locked'] else ''}{', ' + s['note'] if s['note'] else ''})")
+                   f"80th {s['p80']}{', LOCKED' if s['locked'] else ''}{', ' + s['note'] if s['note'] else ''}"
+                   f"{', GP ' + s['gp'] if s.get('gp') else ''}{', returned ' + s['returned'] if s.get('returned') else ''}"
+                   f"{', next-4 avg opp rank ' + str(s['sos_next4']) if s.get('sos_next4') else ''})")
         # top few from EACH tier, so trade targets don't crowd out bench / free agents / waivers
         rows = [a for t in ("Bench", "Free agent", "Waivers", "Trade")
                 for a in [x for x in s["alternatives"] if x["tier"] == t][:per_tier]]
@@ -113,7 +145,8 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
             out.append(_row([a["name"] + (f" ({a['owner']})" if a["owner"] else ""), a["tier"], f"{a['p_outscores']:.0%}",
                              a["opponent"], a["kickoff"], a["status"] or "OK", a["practice"] or "-", a["depth"] or "-",
                              f"{a['mean']}±{a['sd']}", a["p80"], a["season_avg"] if a["season_avg"] is not None else "-",
-                             a["last3"] or "-", a["oprk"] or "-"]))
+                             a.get("gp") or "-", a.get("returned") or "-", a["last3"] or "-", a["oprk"] or "-",
+                             a.get("sos_next4") or "-"]))
     return out
 
 

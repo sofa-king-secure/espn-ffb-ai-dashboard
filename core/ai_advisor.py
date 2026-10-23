@@ -47,14 +47,25 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
         "Section 8 (when present) gives statistical start/sit probabilities against every obtainable player. "
         "Use them as the quantitative baseline: when you recommend against the model, say why (news, role, "
         "game script) and how confident you are.",
+        "Before recommending ANY add, drop or trade, run this check and show it: "
+        "(1) schedule: use section 9 and the 'Next 4' columns, not just this week's opponent; a good player facing "
+        "a run of rank 1-10 defenses is a weaker add, a run of 23-32 a stronger one. "
+        "(2) role vs. results: use GP (games played / team games) and 'Returned'; a low season average caused by "
+        "missed games, or a big game right after returning, is not a reason to drop; a single spike from a "
+        "depth-chart backup is not a reason to add. "
+        "(3) alternatives: name the next-best drop candidate on my bench and the next-best add at that position, "
+        "with their schedules. Weigh all of this through my risk profile; do not switch to risk-averse unless my "
+        "profile is Floor. Use draft capital, target share, snap share or air yards only if you found them "
+        "through web search and cite the source; never estimate them.",
         "CLOSE CALLS in section 8 are coin flips already settled by a fixed tiebreak (health, depth-chart role, "
         "current lineup). Follow each verdict and label it a close call. Override one only for new information "
         "the dossier doesn't contain, and name that information. Never flip a close call on a projection gap alone.",
     ]
     if web_search:
         lines.append("You can search the web. Before recommending a start, sit, add or drop, check the latest "
-                     "injury, practice and inactive news for the players involved, and name the source and date "
-                     "of anything that changes the call.")
+                     "injury, practice and inactive news for the players involved, plus role news (depth chart, "
+                     "snap share, target share) and anything about their upcoming opponents, and name the source "
+                     "and date of anything that changes the call.")
     return "\n".join(lines)
 
 
@@ -83,7 +94,16 @@ Use the spread: if favored, protect the floor; if underdog, name the ceiling pla
 Validate each starting slot against bench alternatives. Call out FLEX dilemmas. For every Q/D/O/IR player give an explicit pivot.
 
 ### 3. Waiver targets with exact drop pairs
-From the % Add movers, separate real role changes from noise. Name 2-3 targets and the exact bench player to drop for each, with the reason.
+From the % Add movers, separate real role changes from noise. Recommend a move only if it is a real
+improvement for my team; zero moves is a valid and often correct answer, and I refresh this many times a
+week, so never invent a move to have something to say. For each recommended move give the exact drop and:
+- **Bottom line:** one bold sentence with the risk call.
+- **Case for the add:** role, schedule ahead (section 9), recent usage.
+- **Flaw / risk:** what could make it fail, and what the drop could still offer (GP, return from injury, schedule).
+- **Alternative:** the next-best add or a different drop, and why it ranks lower.
+If nothing clears the bar, say **Stand pat** and why. You may then list up to 2 players to WATCH (no action
+now), each with the specific change that would turn them into a real move (an injury, a depth-chart change,
+a schedule turn).
 
 ### 4. Depth and stashes
 Bench balance, handcuffs, upcoming bye-week holes, one stash worth holding."""

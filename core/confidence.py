@@ -34,7 +34,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import data_dir
-from .espn_client import IR_SLOT, NON_STARTING_SLOTS, UNSTARTABLE
+from .espn_client import IR_SLOT, NON_STARTING_SLOTS, PRO_TEAM_MAP, UNSTARTABLE, _pro_schedule
 
 POS_IDS = {"QB": 1, "RB": 2, "WR": 3, "TE": 4, "K": 5, "D/ST": 16}
 SLOT_POSITIONS = {0: {"QB"}, 2: {"RB"}, 4: {"WR"}, 6: {"TE"}, 16: {"D/ST"}, 17: {"K"},
@@ -256,6 +256,30 @@ def distribution(p: dict, model: dict, practice: str = "", sleeper_injury: str =
             "note": "" if mult == 1.0 else f"x{mult:.2f} for {status or ''}{' ' + practice if practice else ''}".strip()}
 
 
+def _team_game_weeks(league, period: int) -> dict:
+    """{pro team abbreviation: set(weeks it played)} for completed weeks."""
+    out: dict = {}
+    for w in range(1, period):
+        for team_id in _pro_schedule(league, w):
+            out.setdefault(PRO_TEAM_MAP.get(team_id, str(team_id)), set()).add(w)
+    return out
+
+
+def _availability(p: dict, played: set, team_weeks: dict, history: dict) -> dict:
+    """Games played vs his team's games, and a 'just returned' flag (stats skewed by missed time)."""
+    team = team_weeks.get(p.get("pro_team"), set())
+    if not team or p.get("pos") == "D/ST":
+        return {"gp": "", "missed": 0, "returned": ""}
+    missed = sorted(team - played)
+    returned = ""
+    if missed:
+        back = sorted(w for w in played if w > missed[-1])
+        if back:
+            pts = (history.get(p["player_id"], {}).get("weeks", {}).get(back[0]) or {}).get("act")
+            returned = f"W{back[0]}" + (f" ({pts:.1f} pts)" if pts is not None else "")
+    return {"gp": f"{len(played & team)}/{len(team)}", "missed": len(missed), "returned": returned}
+
+
 # ---------------------------------------------------------------------------------- engine
 def build_confidence(league, snap: dict) -> dict:
     meta = snap["meta"]
@@ -270,6 +294,9 @@ def build_confidence(league, snap: dict) -> dict:
     history = fetch_history(league, [p["player_id"] for p in pool] + logged_ids,
                             getattr(league, "finalScoringPeriod", 18))
     card_players = sum(1 for h in history.values() if h["weeks"] or h["avg"] is not None)
+    # games actually played come from player cards only (box scores list injured players with zeros too)
+    played = {pid: {sp for sp, w in h["weeks"].items() if "act" in w and sp < period} for pid, h in history.items()}
+    team_weeks = _team_game_weeks(league, period)
     box, box_errors = box_history(league, meta, period)
     model = fit_spreads(box)
     for sp, rows in box.items():  # merge past-week projections into card history (cards have actuals only)
@@ -295,6 +322,9 @@ def build_confidence(league, snap: dict) -> dict:
         p["oprk"] = rank
         p["practice"] = i.get("practice", "")
         p["depth"] = i.get("depth", "")
+        p.update(_availability(p, played.get(p["player_id"], set()), team_weeks, history))
+        ahead = ((snap.get("schedule_ahead") or {}).get("players") or {}).get(str(p["player_id"])) or {}
+        p["sos_next4"] = ahead.get("avg_rank")
 
     slots = []
     starters = [p for p in pool if p["tier"] == "Starter"]
@@ -310,6 +340,7 @@ def build_confidence(league, snap: dict) -> dict:
                          "depth": b["depth"], "projected": b["projected"], "mean": b["mean"], "sd": b["sd"],
                          "p80": b["p80"], "season_avg": b["season_avg"], "last3": b["last3"], "oprk": b["oprk"],
                          "pct_owned": b.get("pct_owned"), "pct_change": b.get("pct_change"),
+                         "gp": b.get("gp", ""), "returned": b.get("returned", ""), "sos_next4": b.get("sos_next4"),
                          "p_outscores": round(p_outscores(b, s), 3)})
         alts.sort(key=lambda r: r["p_outscores"], reverse=True)
         kept = [a for t in TIERS for a in [x for x in alts if x["tier"] == t][:KEEP_PER_TIER]]
@@ -332,6 +363,7 @@ def build_confidence(league, snap: dict) -> dict:
                       "pos": s["pos"], "locked": s.get("locked", False), "mean": s["mean"], "sd": s["sd"],
                       "p80": s["p80"], "note": s.get("note", ""), "projected": s["projected"],
                       "season_avg": s["season_avg"], "last3": s["last3"], "oprk": s["oprk"],
+                      "gp": s.get("gp", ""), "returned": s.get("returned", ""), "sos_next4": s.get("sos_next4"),
                       "opponent": s.get("opponent", ""), "kickoff": s.get("kickoff", ""),
                       "status": s.get("status", ""), "practice": s.get("practice", ""), "depth": s.get("depth", ""),
                       "alternatives": kept,

@@ -497,10 +497,14 @@ with tabs[2]:
                                         "opponent": "Opp", "kickoff": "Kickoff", "status": "Status",
                                         "practice": "Practice", "depth": "Depth", "projected": "Proj",
                                         "mean": "Mean", "sd": "SD", "p80": "80th pct", "season_avg": "Season avg",
-                                        "last3": "Last 3: actual (proj)", "oprk": "OPRK", "pct_owned": "% Rost"})
+                                        "last3": "Last 3: actual (proj)", "oprk": "OPRK", "pct_owned": "% Rost",
+                                        "gp": "GP", "returned": "Returned", "sos_next4": "Next 4 opp rank"})
+            for col in ("GP", "Returned", "Next 4 opp rank"):  # runs cached before these existed
+                if col not in view.columns:
+                    view[col] = None
             st.dataframe(view[["Player", "Tier", "P(outscores)", "Pos", "Team", "Opp", "Kickoff", "Status", "Practice",
-                               "Depth", "Proj", "Mean", "SD", "80th pct", "Season avg", "Last 3: actual (proj)",
-                               "OPRK", "% Rost"]],
+                               "Depth", "Proj", "Mean", "SD", "80th pct", "Season avg", "GP", "Returned",
+                               "Last 3: actual (proj)", "OPRK", "Next 4 opp rank", "% Rost"]],
                          hide_index=True, width="stretch", height=_fit(len(view)),
                          column_config={"Player": st.column_config.Column(pinned=True),
                                         "P(outscores)": st.column_config.ProgressColumn(format="percent",
@@ -564,11 +568,15 @@ with tabs[3]:
                 view = view.sort_values("projected", ascending=False)
             if "kickoff" not in view.columns:  # runs cached before kickoff times existed
                 view = view.assign(kickoff="")
+            sa = (snap.get("schedule_ahead") or {}).get("players") or {}
+            view = view.assign(next4=view["player_id"].map(lambda i: (sa.get(str(i)) or {}).get("avg_rank")))
             show = view.head(40).rename(columns={"name": "Player", "pos": "Pos", "pro_team": "Team", "opponent": "Opp",
+                                                 "next4": "Next 4 opp rank",
                                                  "kickoff": "Kickoff",
                                                  "projected": "Proj", "pct_owned": "% Rost", "pct_change": "% Chg",
                                                  "status": "Status", "on_waivers": "On waivers"})
-            st.dataframe(show[["Player", "Pos", "Team", "Opp", "Kickoff", "Proj", "% Rost", "% Chg", "Status", "On waivers"]],
+            st.dataframe(show[["Player", "Pos", "Team", "Opp", "Kickoff", "Proj", "Next 4 opp rank", "% Rost", "% Chg",
+                               "Status", "On waivers"]],
                          hide_index=True, width="stretch", height=_fit(len(show)),
                          column_config={
                              "% Rost": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100),
