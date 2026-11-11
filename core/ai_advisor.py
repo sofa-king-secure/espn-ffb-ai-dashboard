@@ -43,7 +43,11 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
         "Section 7 of the dossier (when present) is external data from Sleeper: injury status, practice "
         "participation, depth-chart order, and league-wide add/drop trends. Where ESPN and Sleeper disagree, "
         "say so and favor the more recent practice information.",
-        "Value designated opportunity (depth-chart role, likely touches) over past fantasy points.",
+        "Depth charts are incomplete: a blank Depth means Sleeper has no listing for that player (common for "
+        "rookies, recent promotions, kickers and D/ST). That is unknown data, NOT evidence of a backup role; never "
+        "describe a player as 'not on the depth chart' or penalize him for it. WR depth is listed by spot: LWR1, "
+        "RWR1 and SWR1 are all starters, while 2 or higher is a backup at that spot. Judge role from projection, "
+        "recent usage (last 3), GP and % rostered first; use depth only when it is listed.",
         "Section 8 (when present) gives statistical start/sit probabilities against every obtainable player. "
         "Use them as the quantitative baseline: when you recommend against the model, say why (news, role, "
         "game script) and how confident you are.",
@@ -57,9 +61,13 @@ def system_prompt(profile: str, focus: list[str], web_search: bool = False) -> s
         "with their schedules. Weigh all of this through my risk profile; do not switch to risk-averse unless my "
         "profile is Floor. Use draft capital, target share, snap share or air yards only if you found them "
         "through web search and cite the source; never estimate them.",
-        "CLOSE CALLS in section 8 are coin flips already settled by a fixed tiebreak (health, depth-chart role, "
-        "current lineup). Follow each verdict and label it a close call. Override one only for new information "
-        "the dossier doesn't contain, and name that information. Never flip a close call on a projection gap alone.",
+        "Section 10 (when present) is the model's head-to-head: my starters vs. my opponent's slot by slot and a "
+        "team win probability. Use it for the game script (a big favorite protects floor, an underdog needs "
+        "ceiling) and to spot the slots where a change matters most.",
+        "CLOSE CALLS in section 8 are coin flips already settled by a fixed tiebreak (projection edge of 1+ point "
+        "or 10%, then health, then depth chart only when both players are listed, then current lineup). Follow "
+        "each verdict and label it a close call. Override one only for new information the dossier doesn't "
+        "contain, and name that information. Projection is already the first step, so don't re-decide on it.",
     ]
     if web_search:
         lines.append("You can search the web. Before recommending a start, sit, add or drop, check the latest "
@@ -204,6 +212,29 @@ class Advisor:
             messages=[{"role": "system", "content": self.system}] + messages)
         self.model_used = self.settings.openai_model
         return resp.choices[0].message.content or ""
+
+
+def update_prompt(dossier_md: str, changes: list[str]) -> str:
+    """Continue the conversation after the manager acted on the plan."""
+    done = "\n".join(f"- {c}" for c in changes) if changes else (
+        "- No roster, lineup or pending-move changes detected on ESPN. Treat this as a data refresh "
+        "(projections, injuries, practice reports, news may have moved).")
+    return f"""UPDATE: I acted on your plan (some or all of it). Changes on my ESPN team since your last plan:
+{done}
+
+Refreshed dossier:
+
+{dossier_md}
+
+Continue from your previous plan instead of starting over:
+- Mark which of your recommendations are now DONE and whether they landed as intended (a waiver claim
+  still pending counts as in progress, not done).
+- Re-check what these changes affect: lineup slots, the next drop candidate, bye-week coverage, handcuffs.
+- Keep every other call unless the refreshed data shows a real change (same consistency rule as before);
+  for each reversal add "Changed: <call> because <what changed>".
+- Flag anything new: injuries, practice reports, pending moves, empty or locked lineup slots.
+- Don't invent moves to fill space; "Stand pat" is a valid answer.
+Write the full updated game plan in the same four sections."""
 
 
 def context_primer(dossier_md: str, gameplan: str = "") -> str:

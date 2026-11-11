@@ -91,7 +91,8 @@ run logs its predictions (frozen at kickoff); once games are played, the next ru
 section 8 of the dossier.
 
 **Close calls don't flip on refresh.** When the model has a starter and an alternative within 40–60%, a fixed
-tiebreak decides: health first, then depth-chart role, then your current lineup. Each slot gets one decision (the
+tiebreak decides: a projection edge of 1+ point (or 10%) first, then health, then depth chart (only when
+Sleeper lists both players; a missing listing is never counted against anyone), then your current lineup. Each slot gets one decision (the
 weakest starter picks first; no player is used twice; players already kicked off are left out). The AI follows
 those decisions, and each new game plan sees the previous one for the same week and must keep its calls unless
 something actually changed (injury or practice news, depth chart, lineup lock, sourced news, or your risk/focus
@@ -104,6 +105,15 @@ injury. These appear in the Confidence and Waiver wire tabs and in dossier secti
 add, drop or trade, the AI must weigh the schedule ahead, separate missed-time from poor play, and name the
 alternative. It only recommends moves that are real improvements: "Stand pat" is a valid answer, optionally with
 up to two players to watch and what would have to change.
+
+## Head-to-head and Update AI
+The **Lineup** tab shows the model's head-to-head: each of your starters against your opponent's starter in the
+same slot type, the chance you win each slot, and a whole-team win probability (pregame view; the scoreboard has
+the live score once games start). The AI gets it as dossier section 10.
+
+On the **AI strategy** tab, **Update AI** is for after you've acted on the plan: it re-pulls your team from ESPN,
+lists what changed (adds, drops, lineup moves, new pending claims), and has the AI continue from its last plan in
+the same conversation, marking what's done and re-checking what the changes affect.
 
 ## Access from other devices
 Off by default: the app listens on 127.0.0.1 only. To reach it from another computer on your private network

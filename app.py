@@ -16,7 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from core import cache
-from core.ai_advisor import Advisor, context_primer, gameplan_prompt, recommend_lineup
+from core.ai_advisor import Advisor, context_primer, gameplan_prompt, recommend_lineup, update_prompt
 from core.auth import (AuthStatus, espn_leagues_from_history, find_cookie_db, sanitize_cookies,
                        sync_from_firefox)
 from core.config import ENV_PATH, ENV_SCHEMA, data_dir, lan_ips, load_settings, mask, update_env_file
@@ -132,6 +132,46 @@ def _advisor(profile: str, focus: list[str]) -> Advisor:
     return st.session_state.advisor
 
 
+def _pull_espn(week_offset: int) -> tuple[dict, str]:
+    """Fresh ESPN snapshot + Sleeper intel + confidence + dossier (no AI). Call inside st.status."""
+    st.write("Connecting to ESPN…")
+    league, team = connect(settings)
+    st.write("Pulling matchup, roster, pending moves, waiver wire…")
+    snap = build_snapshot(league, team, settings, week_offset=week_offset)
+    if settings.sleeper_intel:
+        st.write("Pulling Sleeper injury, practice, depth-chart and trending data…")
+        snap["intel"] = build_intel(snap)
+        for err in snap["intel"]["errors"]:
+            st.write(f"→ {err}")
+    st.write("Scoring start/sit confidence across every obtainable player…")
+    try:
+        snap["confidence"] = build_confidence(league, snap)
+    except Exception as exc:
+        st.write(f"→ Confidence model skipped: {exc}")
+    return snap, build_markdown(snap)
+
+
+def _roster_changes(old: dict, new: dict) -> list[str]:
+    """Plain-language diff between two snapshots: adds, drops, lineup moves, pending moves."""
+    if not old:
+        return []
+    from core.espn_client import SLOT_NAMES as _SN
+    before = {p["player_id"]: p for p in old.get("roster", [])}
+    after = {p["player_id"]: p for p in new.get("roster", [])}
+    out = [f"Added {p['name']} ({p['pos']}, {p['pro_team']}) to {_SN.get(p['slot_id'], p['slot'])}"
+           for pid, p in after.items() if pid not in before]
+    out += [f"Dropped {p['name']} ({p['pos']}, {p['pro_team']})" for pid, p in before.items() if pid not in after]
+    out += [f"Moved {p['name']}: {before[pid]['slot']} -> {p['slot']}"
+            for pid, p in after.items() if pid in before and before[pid]["slot_id"] != p["slot_id"]]
+    old_pending = {pm.get("id") for pm in old.get("pending", [])}
+    for pm in new.get("pending", []):
+        if pm.get("id") not in old_pending:
+            ins, outs = ", ".join(pm["incoming"]) or "-", ", ".join(pm["outgoing"]) or "-"
+            out.append(f"New pending {pm['type'].lower()} ({pm['status'].lower()}, processes {pm['process_date']}): "
+                       f"in {ins}; out {outs}")
+    return out
+
+
 # ---------------------------------------------------------------- sidebar
 with st.sidebar:
     st.markdown("### Controls")
@@ -186,21 +226,7 @@ if run_live:
             st.write("Syncing ESPN session from Firefox…")
             st.session_state.auth = sync_from_firefox(settings)
             st.write(f"→ {st.session_state.auth.message}")
-            st.write("Connecting to ESPN…")
-            league, team = connect(settings)
-            st.write("Pulling matchup, roster, pending moves, waiver wire…")
-            snap = build_snapshot(league, team, settings, week_offset=1 if week_mode == "next" else 0)
-            if settings.sleeper_intel:
-                st.write("Pulling Sleeper injury, practice, depth-chart and trending data…")
-                snap["intel"] = build_intel(snap)
-                for err in snap["intel"]["errors"]:
-                    st.write(f"→ {err}")
-            st.write("Scoring start/sit confidence across every obtainable player…")
-            try:
-                snap["confidence"] = build_confidence(league, snap)
-            except Exception as exc:
-                st.write(f"→ Confidence model skipped: {exc}")
-            dossier = build_markdown(snap)
+            snap, dossier = _pull_espn(1 if week_mode == "next" else 0)
             cache.save_run(snap, dossier)
             _adopt_run({"snapshot": snap, "dossier_md": dossier}, "live")
             st.session_state.advisor = None
@@ -318,6 +344,29 @@ with tabs[0]:
             if ir:
                 st.subheader("IR")
                 st.dataframe(_styled(_roster_df(ir)), hide_index=True, width="stretch")
+
+        h2h = (snap.get("confidence") or {}).get("head_to_head")
+        if h2h:
+            st.subheader(f"Head-to-head vs {h2h['opponent']}")
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Win probability (model)", f"{h2h['win_probability']:.0%}")
+            m2.metric("Model totals", f"{h2h['my_total']:.1f} vs {h2h['opp_total']:.1f}")
+            m3.metric("Slots favored", f"{h2h['slots_favored']} of {h2h['slots']}")
+            m4.metric("ESPN spread", spread_text(snap["matchup"]["spread"]))
+            hd = pd.DataFrame([{
+                "Slot": r["slot"], "Mine": r["mine"], "My game": r["mine_game"],
+                "My mean ± sd": f"{r['mine_mean']:.1f} ± {r['mine_sd']:.1f}",
+                "P(I win slot)": r["p_mine"],
+                "Theirs": r["theirs"], "Their game": r["theirs_game"],
+                "Their mean ± sd": f"{r['theirs_mean']:.1f} ± {r['theirs_sd']:.1f}"} for r in h2h["rows"]])
+            st.dataframe(hd, hide_index=True, width="stretch", height=_fit(len(hd)),
+                         column_config={"P(I win slot)": st.column_config.ProgressColumn(format="percent",
+                                                                                         min_value=0, max_value=1)})
+            st.caption("Same model as the Confidence tab: each starter vs. the opponent's starter in the same slot "
+                       "type, and the team win probability from both lineups' combined range (players treated as "
+                       "independent, so real games swing a bit more)."
+                       + (" Some games have kicked off: this is the pregame view; the scoreboard has the live score."
+                          if h2h.get("games_started") else ""))
 
         with st.expander("Scenario tester — swap players and see the projected total", expanded=False):
             roster = snap["roster"]
@@ -648,6 +697,43 @@ with tabs[4]:
                 answer = f"AI request failed: {exc}"
             st.session_state.chat.append({"role": "assistant", "content": answer})
             st.rerun()
+
+        st.divider()
+        st.caption("Made some of the moves? **Update AI** re-pulls your team from ESPN, works out what changed "
+                   "(adds, drops, lineup moves, new pending claims) and has the AI continue from its last plan, "
+                   "keeping this conversation.")
+        if st.button("Update AI", type="primary", key="update_ai"):
+            old_snap, old_dossier = st.session_state.snapshot, st.session_state.dossier
+            old_report = st.session_state.ai_report
+            week_offset = 1 if ((old_snap or {}).get("meta") or {}).get("mode") == "next" else 0
+            updated = False
+            with st.status("Updating from ESPN…", expanded=True) as status:
+                try:
+                    st.session_state.auth = sync_from_firefox(settings)
+                    new_snap, new_dossier = _pull_espn(week_offset)
+                    changes = _roster_changes(old_snap, new_snap)
+                    cache.save_run(new_snap, new_dossier)
+                    _adopt_run({"snapshot": new_snap, "dossier_md": new_dossier}, "live")  # keeps advisor + chat
+                    adv = _advisor(profile, focus)
+                    if not adv.history:  # new session: give it what it knew before the changes
+                        adv.send(context_primer(old_dossier, old_report))
+                    st.write(f"Asking {settings.ai_provider} to continue from its last plan…")
+                    st.session_state.ai_report = adv.send(update_prompt(new_dossier, changes))
+                    st.session_state.ai_model = adv.model_used
+                    cache.update_latest_report(st.session_state.ai_report, adv.model_used,
+                                               settings.league_id, settings.team_id)
+                    st.session_state.chat.append({"role": "user", "content": "**Update AI**: " + (
+                        "; ".join(changes) if changes else "no roster changes detected; refreshed data")})
+                    st.session_state.chat.append({"role": "assistant",
+                                                  "content": "Updated the game plan above with these changes."})
+                    status.update(label="AI updated", state="complete", expanded=False)
+                    updated = True
+                except EspnError as exc:
+                    status.update(label=f"ESPN error: {exc}", state="error")
+                except Exception as exc:
+                    status.update(label=f"Update failed: {exc}", state="error")
+            if updated:  # on failure, leave the status box up so the error stays visible
+                st.rerun()
 
 
 # ---------------------------------------------------------------- Export tab

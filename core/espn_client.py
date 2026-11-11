@@ -335,7 +335,7 @@ def _next_week(league, team, week, scoring_period):
         opp = team.schedule[matchup_period - 1]
     if opp is not None and getattr(opp, "team_id", None) not in (None, team.team_id):
         opp_roster = _roster(league, opp, scoring_period, {}, week=week, data=data, future=True)
-        out.update(opponent=opp.team_name, opp_projected=_starter_projection(opp_roster))
+        out.update(opponent=opp.team_name, opponent_id=opp.team_id, opp_projected=_starter_projection(opp_roster))
         out["note"] = "Projections use each team's current starters for next week."
     out["spread"] = round(out["my_projected"] - out["opp_projected"], 2)
     return out, roster
@@ -357,6 +357,7 @@ def _matchup(league, team, week):
             box_players = {p.playerId: p for p in lineup}
             out.update(
                 opponent=getattr(opp_team, "team_name", "Opponent"),
+                opponent_id=getattr(opp_team, "team_id", None),
                 my_projected=round(float((m.home_projected if mine_home else m.away_projected) or 0), 2),
                 opp_projected=round(float((m.away_projected if mine_home else m.home_projected) or 0), 2),
                 my_score=round(float((m.home_score if mine_home else m.away_score) or 0), 2),

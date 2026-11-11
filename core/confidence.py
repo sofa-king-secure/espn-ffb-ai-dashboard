@@ -52,6 +52,10 @@ BUCKETS = [(0.5, 0.6), (0.6, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.01)]
 
 # Close calls: when the model is this close, a fixed tiebreak decides, so refreshes don't flip-flop.
 CLOSE_BAND = (0.40, 0.60)
+# Step 1 of the tiebreak: a projection lead this big decides on its own. Small refresh-to-refresh
+# wobbles in ESPN projections stay under it, so it doesn't reintroduce flip-flopping.
+PROJ_EDGE_PTS = 1.0
+PROJ_EDGE_PCT = 0.10
 STATUS_RANK = {"": 0, "P": 0, "DTD": 1, "Q": 1, "D": 2, "O": 3, "IR": 3, "SSPD": 3}
 PRACTICE_RANK = {"": 0, "FULL": 0, "FP": 0, "LIMITED": 1, "LP": 1, "DNP": 2}
 
@@ -76,24 +80,22 @@ def _depth_order(p: dict) -> int | None:
 def _decide_close_calls(slots: list[dict], pool: list[dict]) -> None:
     """One decision per slot; a player used in one slot can't be used again.
 
-    The weakest starter picks first (worst health, then lowest on the depth chart, then
-    lowest model mean), so a better bench player replaces the starter who most needs
-    replacing rather than whichever slot happens to come first. Among alternatives that win
-    their tiebreak, prefer bench (no transaction), then healthier, then higher on the depth
-    chart, then the model's edge."""
+    The weakest starter picks first (worst health, then lowest model mean), so a better bench
+    player replaces the starter who most needs replacing rather than whichever slot happens to
+    come first. Among alternatives that win their tiebreak, prefer bench (no transaction), then
+    healthier, then the model's edge. Depth charts are not used here (they're often incomplete)."""
     by_id = {p["player_id"]: p for p in pool}
     used: set = set()
 
     def weakest_first(sl):
         st = by_id.get(sl["player_id"], {})
         h = _health(st)
-        return (-h[0], -h[1], -(_depth_order(st) or 99), sl["mean"])
+        return (-h[0], -h[1], sl["mean"])
 
     for sl in sorted(slots, key=weakest_first):
         winners = [c for c in sl.get("close_calls", []) if c["winner"] == c["alt"]]
         winners.sort(key=lambda c: (c["tier"] != "Bench",
                                     _health(by_id.get(c.get("alt_id"), {})),
-                                    _depth_order(by_id.get(c.get("alt_id"), {})) or 99,
                                     -c["p_outscores"]))
         pick = next((c for c in winners if c.get("alt_id") not in used), None)
         if pick:
@@ -108,21 +110,26 @@ def _decide_close_calls(slots: list[dict], pool: list[dict]) -> None:
 
 
 def tiebreak(starter: dict, alt: dict) -> tuple[bool, str]:
-    """(alt_wins, reason). Order: health, then depth-chart role, then current lineup.
+    """(alt_wins, reason). Order: projection edge, health, depth chart (both listed), current lineup.
 
-    A fourth step (risk profile: 80th percentile vs mean) only matters when neither
-    player is already starting; every comparison here includes the current starter,
-    so step 3 always settles it.
+    1. Projection edge: the model mean (ESPN projection with the injury/practice cut already applied)
+       wins outright when it leads by >= 1 point or 10%.
+    2. Health: healthy beats Q/D, full practice beats limited/DNP.
+    3. Depth chart, ONLY when Sleeper lists both players. Sleeper's depth charts routinely omit rookies,
+       recent promotions and kickers, so a missing listing is unknown data, never a demotion.
+    4. Current lineup: no churn on a coin flip.
     """
+    gap = alt["mean"] - starter["mean"]
+    edge = max(PROJ_EDGE_PTS, PROJ_EDGE_PCT * max(alt["mean"], starter["mean"]))
+    if abs(gap) >= edge:
+        return gap > 0, (f"projection ({alt['name']} {alt['mean']:.2f} vs {starter['name']} {starter['mean']:.2f}, "
+                         f"a {abs(gap):.2f}-point edge)")
     hs, ha = _health(starter), _health(alt)
     if hs != ha:
         return ha < hs, f"health ({alt['name']}: {_health_text(alt)}; {starter['name']}: {_health_text(starter)})"
     ds, da = _depth_order(starter), _depth_order(alt)
-    if ds is not None or da is not None:
-        ds_, da_ = (ds if ds is not None else 99), (da if da is not None else 99)
-        if ds_ != da_:
-            return da_ < ds_, (f"depth chart ({alt['name']}: {alt.get('depth') or 'not listed'}; "
-                               f"{starter['name']}: {starter.get('depth') or 'not listed'})")
+    if ds is not None and da is not None and ds != da:
+        return da < ds, f"depth chart ({alt['name']}: {alt['depth']}; {starter['name']}: {starter['depth']})"
     return False, "current lineup (no churn on a coin flip)"
 
 
@@ -280,6 +287,53 @@ def _availability(p: dict, played: set, team_weeks: dict, history: dict) -> dict
     return {"gp": f"{len(played & team)}/{len(team)}", "missed": len(missed), "returned": returned}
 
 
+H2H_SLOT_ORDER = [0, 2, 4, 6, 23, 3, 5, 7, 16, 17]
+
+
+def head_to_head(pool: list[dict], snap: dict) -> dict | None:
+    """My starters vs. my opponent's starters, slot by slot, plus a whole-team win probability.
+
+    Same distributions as everywhere else in the model. Slots are paired by type (QB vs QB, RB vs RB,
+    FLEX vs FLEX...), best-projected first within a type. The team total treats players as independent,
+    so it slightly understates real-game volatility. Pregame model: once games kick off, use the
+    scoreboard for the live picture.
+    """
+    mu = snap.get("matchup") or {}
+    opp_id, opp_name = mu.get("opponent_id"), mu.get("opponent")
+    mine = [p for p in pool if p["tier"] == "Starter"]
+    theirs = [p for p in pool if p["tier"] == "Trade" and p.get("slot_id") not in NON_STARTING_SLOTS
+              and ((opp_id is not None and p.get("fantasy_team_id") == opp_id)
+                   or (opp_id is None and p.get("owner") == opp_name))]
+    if not mine or not theirs:
+        return None
+    order = {sid: i for i, sid in enumerate(H2H_SLOT_ORDER)}
+    rows = []
+    for sid in sorted({p["slot_id"] for p in mine + theirs}, key=lambda x: order.get(x, 99)):
+        a = sorted([p for p in mine if p["slot_id"] == sid], key=lambda p: -p["mean"])
+        b = sorted([p for p in theirs if p["slot_id"] == sid], key=lambda p: -p["mean"])
+        for i in range(max(len(a), len(b))):
+            m, t = (a[i] if i < len(a) else None), (b[i] if i < len(b) else None)
+            rows.append({
+                "slot": (m or t)["slot"],
+                "mine": m["name"] if m else "(empty)", "mine_mean": m["mean"] if m else 0.0, "mine_sd": m["sd"] if m else 0.0,
+                "mine_game": f"{m.get('opponent', '')} {m.get('kickoff', '')}".strip() if m else "",
+                "theirs": t["name"] if t else "(empty)", "theirs_mean": t["mean"] if t else 0.0, "theirs_sd": t["sd"] if t else 0.0,
+                "theirs_game": f"{t.get('opponent', '')} {t.get('kickoff', '')}".strip() if t else "",
+                "p_mine": round(p_outscores({"mean": m["mean"], "sd": m["sd"]} if m else {"mean": 0, "sd": 0.5},
+                                            {"mean": t["mean"], "sd": t["sd"]} if t else {"mean": 0, "sd": 0.5}), 3),
+            })
+    my_mu = sum(r["mine_mean"] for r in rows)
+    op_mu = sum(r["theirs_mean"] for r in rows)
+    my_sd = math.sqrt(sum(r["mine_sd"] ** 2 for r in rows))
+    op_sd = math.sqrt(sum(r["theirs_sd"] ** 2 for r in rows))
+    win = p_outscores({"mean": my_mu, "sd": my_sd}, {"mean": op_mu, "sd": op_sd})
+    started = any(p.get("locked") for p in mine + theirs)
+    return {"opponent": opp_name, "rows": rows, "win_probability": round(win, 3),
+            "my_total": round(my_mu, 1), "my_sd": round(my_sd, 1), "opp_total": round(op_mu, 1), "opp_sd": round(op_sd, 1),
+            "slots_favored": sum(1 for r in rows if r["p_mine"] > 0.5), "slots": len(rows),
+            "games_started": started}
+
+
 # ---------------------------------------------------------------------------------- engine
 def build_confidence(league, snap: dict) -> dict:
     meta = snap["meta"]
@@ -372,11 +426,13 @@ def build_confidence(league, snap: dict) -> dict:
                       "best_by_tier": {t: next((a for a in alts if a["tier"] == t), None) for t in TIERS}})
 
     _decide_close_calls(slots, pool)
+    h2h = head_to_head(pool, snap)
     log_predictions(meta, pool)
     diagnostics = {"card_players": card_players, "box_weeks": sorted(box),
                    "box_samples": sum(len(r) for r in box.values()), "errors": box_errors}
     return {"built_at": datetime.now().isoformat(timespec="seconds"), "model": model, "slots": slots,
-            "pool_size": len(pool), "calibration": calibrate(meta, history), "diagnostics": diagnostics}
+            "pool_size": len(pool), "calibration": calibrate(meta, history), "diagnostics": diagnostics,
+            "head_to_head": h2h}
 
 
 # ---------------------------------------------------------------------------------- log + calibration

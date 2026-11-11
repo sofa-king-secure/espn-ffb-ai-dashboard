@@ -74,6 +74,7 @@ def build_markdown(snap: dict, fa_limit: int = 10) -> str:
     out += intel_markdown(snap.get("intel"), snap)
     out += confidence_markdown(snap.get("confidence"))
     out += schedule_markdown(snap)
+    out += h2h_markdown(snap)
     return "\n".join(out)
 
 
@@ -83,6 +84,22 @@ def _next4(snap: dict, player_id) -> str:
         return "-"
     games = " ".join(f"{g['opp']}({g['rank']})" if g["rank"] else g["opp"] for g in sa["games"])
     return f"{sa['avg_rank']} [{games}]" if sa.get("avg_rank") else games
+
+
+def h2h_markdown(snap: dict) -> list[str]:
+    h = (snap.get("confidence") or {}).get("head_to_head")
+    if not h:
+        return []
+    out = ["", f"## 10. Head-to-head vs {h['opponent']} (statistical model)",
+           f"Win probability {h['win_probability']:.0%}; model totals {h['my_total']} ± {h['my_sd']} vs "
+           f"{h['opp_total']} ± {h['opp_sd']}; I'm favored in {h['slots_favored']} of {h['slots']} slots."
+           + (" Some games have started; this is the pregame view." if h.get("games_started") else "")]
+    hdr = ["Slot", "Mine", "My game", "Mean±SD", "P(I win slot)", "Theirs", "Their game", "Mean±SD"]
+    out += [_row(hdr), _row([":---"] * len(hdr))]
+    for r in h["rows"]:
+        out.append(_row([r["slot"], r["mine"], r["mine_game"], f"{r['mine_mean']}±{r['mine_sd']}", f"{r['p_mine']:.0%}",
+                         r["theirs"], r["theirs_game"], f"{r['theirs_mean']}±{r['theirs_sd']}"]))
+    return out
 
 
 def schedule_markdown(snap: dict) -> list[str]:
@@ -116,7 +133,8 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
     decided = [sl for sl in conf["slots"] if sl.get("decision")]
     if decided:
         out.append("\n**CLOSE-CALL DECISIONS (model within 40-60%), one per slot, settled by a fixed tiebreak: "
-                   "health, then depth-chart role, then current lineup; no player is used in two slots.** Follow "
+                   "a projection edge of 1+ point or 10%, then health, then depth chart only when Sleeper lists both "
+                   "players, then current lineup; no player is used in two slots.** Follow "
                    "these unless there is NEW information (injury/practice update, depth-chart change, sourced news) "
                    "that the dossier doesn't reflect:")
         out += [f"- {sl['slot']} ({sl['name']}): {sl['decision']['verdict']}. Tiebreak: {sl['decision']['reason']}."
@@ -126,6 +144,7 @@ def confidence_markdown(conf: dict | None, per_tier: int = 3) -> list[str]:
         out.append(f"Calibration so far: {cal['pairs']:,} graded pairs, Brier {cal['brier']}; " + "; ".join(
             f"{r['bucket']} predicted -> {r['actual_hit_rate']:.0%} happened (n={r['pairs']})"
             for r in cal["table"] if r["pairs"]) + ".")
+    out.append("Depth column: blank = no Sleeper listing (unknown, not a demotion).")
     h = ["Alternative", "Tier", "P", "Opp", "Kickoff", "Status", "Practice", "Depth", "Mean±SD", "80th",
          "Season avg", "GP", "Returned", "Last 3 act (proj)", "OPRK", "Next 4 avg rank"]
     for s in conf["slots"]:
@@ -170,6 +189,8 @@ def intel_markdown(intel: dict | None, snap: dict | None = None) -> list[str]:
     rows = [r for r in intel.get("roster", []) if r["matched"]]
     if rows:
         games = {p["player_id"]: p for p in (snap or {}).get("roster", [])}
+        out.append("Depth chart: blank = Sleeper has no listing (unknown, NOT a backup). WR spots: LWR1/RWR1/SWR1 "
+                   "are all starters; 2+ is a backup at that spot.")
         h = ["Player", "Opp", "Kickoff", "ESPN status", "Sleeper injury", "Practice", "Depth chart"]
         out += ["", _row(h), _row([":---"] * len(h))]
         for r in rows:
